@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "caral": {
+      "command": "python3",
+      "args": ["/Users/josemorales/Claude/caral/mcp/server.py"],
+      "env": {
+        "CARAL_CORE": "http://localhost:7777",
+        "CARAL_AGENT_TOKEN": "agent-dev",
+        "CARAL_PROJECT": "Vega"
+      }
+    }
+  }
+}

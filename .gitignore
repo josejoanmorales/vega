@@ -1,0 +1,15 @@
+# Secrets — never commit
+.env
+
+# Runtime data (snapshots, DuckDB) — universe CSVs are re-added explicitly by WI-058
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
