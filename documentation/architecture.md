@@ -14,11 +14,27 @@ price, percentage, or statistic from memory.
 | Module | Work item | Status |
 |---|---|---|
 | `src/vega/` package root, tooling, verify gate | WI-057 | shipped |
-| `src/vega/data/` — sources, snapshots, validation, universe | WI-058 | planned |
+| `src/vega/data/` — sources, snapshots, validation, universe | WI-058 | shipped |
 | regime & event calendar | WI-059 | planned |
 | ledger + override log | WI-060 | planned |
 | paper executor | WI-061 | planned |
 | briefing v1 | WI-062 | planned |
+
+## Data layer (WI-058)
+
+- **Adapters** (`src/vega/data/sources/`): yfinance = canonical equity bars (consolidated
+  volume); Alpaca IEX = equity close cross-check only (its volume is never consumed);
+  Binance = canonical crypto bars; CoinGecko = crypto close cross-check. Class-share
+  notation is normalized to Yahoo style (`BF-B`) at the adapter boundary.
+- **Snapshots** (`snapshot.py`): raw payloads are append-only under `data/snapshots/`;
+  validated output is write-once per data date under `data/clean/` (identical rewrite =
+  no-op, drifted rewrite = `SnapshotConflictError`). DuckDB views `bars` / `quarantine`
+  over the clean tree are the ONLY read path for downstream consumers.
+- **Validation** (`validate.py`): per (symbol, date) close reconciliation, default
+  tolerance 0.5%; breaches and cross-check gaps are quarantined with a reason.
+- **Universe** (`universe.py` + `data/universe/universe-v1.csv`, committed): S&P 500 +
+  Nasdaq-100 + 30 ETFs + top-20 crypto, $20M median-dollar-volume filter, versions
+  append-only via `scripts/refresh_universe.py`.
 
 ## Verification gate
 

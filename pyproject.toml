@@ -3,7 +3,15 @@ name = "vega"
 version = "0.1.0"
 description = "Evidence-based swing-trading analyst — deterministic quant core, verified track record"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "alpaca-py>=0.43.5",
+    "duckdb>=1.5.4",
+    "pandas>=3.0.3",
+    "pyarrow>=24.0.0",
+    "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
+    "yfinance>=1.5.1",
+]
 
 [dependency-groups]
 dev = [
@@ -11,6 +19,9 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "pip-audit>=2.7",
+    "pandas-stubs>=3.0.3.260530",
+    "types-requests>=2.33.0.20260518",
+    "lxml>=6.1.1",
 ]
 
 [build-system]
@@ -35,6 +46,10 @@ select = ["E", "F", "W", "I", "B", "UP", "S"]
 [tool.mypy]
 strict = true
 files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["yfinance.*", "duckdb.*", "dotenv.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -20,8 +20,8 @@ echo "▶ typecheck"
 uv run mypy
 
 echo "▶ lint (incl. security static analysis)"
-uv run ruff check src tests
-uv run ruff format --check src tests
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
 
 echo "▶ test"
 uv run pytest -q

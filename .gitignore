@@ -1,8 +1,9 @@
 # Secrets — never commit
 .env
 
-# Runtime data (snapshots, DuckDB) — universe CSVs are re-added explicitly by WI-058
-data/
+# Runtime data (snapshots, DuckDB) — the versioned universe artifact IS committed
+data/*
+!data/universe/
 
 # Python
 __pycache__/
