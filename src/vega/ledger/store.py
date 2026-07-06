@@ -55,6 +55,30 @@ class LedgerStore:
         )
         return oid
 
+    def append_fill(
+        self, ref_id: str, order_id: str, qty: float, price: float | None, status: str
+    ) -> str:
+        """Paper-fill record linked to a recommendation (added by WI-061; append-only)."""
+        if ref_id not in {r["id"] for r in self.entries()}:
+            raise ValueError(f"fill references unknown recommendation {ref_id}")
+        fid = str(uuid.uuid4())
+        self._append_line(
+            {
+                "type": "fill",
+                "id": fid,
+                "at": datetime.now(UTC).isoformat(),
+                "ref_id": ref_id,
+                "order_id": order_id,
+                "qty": qty,
+                "price": price,
+                "status": status,
+            }
+        )
+        return fid
+
+    def fills(self) -> list[dict[str, Any]]:
+        return self._records("fill")
+
     def _records(self, kind: str) -> list[dict[str, Any]]:
         if not self._path.exists():
             return []

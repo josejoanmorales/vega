@@ -19,6 +19,12 @@ Daily data ingest (fetch → validate → write-once clean store):
 uv run python -m vega.data.ingest 7   # last 7 days
 ```
 
+Daily pre-market routine (ingest first, then briefing):
+
+```bash
+uv run python -m vega.data.ingest 7 && uv run python -m vega.briefing
+```
+
 ## Layout
 
 - `src/vega/` — the deterministic engine (LLM never computes numbers; see `documentation/architecture.md`)

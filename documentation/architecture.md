@@ -17,8 +17,8 @@ price, percentage, or statistic from memory.
 | `src/vega/data/` — sources, snapshots, validation, universe | WI-058 | shipped |
 | `src/vega/regime/` — regime state + macro/earnings calendar | WI-059 | shipped |
 | `src/vega/ledger/` — append-only ledger + override log | WI-060 | shipped |
-| paper executor | WI-061 | planned |
-| briefing v1 | WI-062 | planned |
+| `src/vega/execution/` — paper executor + slippage-haircut P&L | WI-061 | shipped |
+| `src/vega/briefing/` — deterministic pre-market briefing v1 | WI-062 | shipped (5-day gate running) |
 
 ## Data layer (WI-058)
 
@@ -56,6 +56,20 @@ price, percentage, or statistic from memory.
 - `store.py`: append-only JSONL with fsync per write (Caral audit-log pattern). No
   update/delete API exists; corrections append with `supersedes`, human deviations are
   `override` records linked to the original call. Runtime state under gitignored `data/ledger/`.
+
+## Execution & briefing (WI-061, WI-062)
+
+- `execution/executor.py`: pending ledger longs → Alpaca paper market orders behind an
+  injectable `TradingBackend` protocol (tests run offline against a fake). Fills append
+  to the ledger linked by `ref_id` — the recommendation is never mutated. Failures go to
+  an append-only log the briefing surfaces; one bad order never stops the batch.
+  Sizing = fixed $1,000 notional until WI-064's risk engine replaces the caller.
+- `execution/pnl.py`: all paper P&L reported through a slippage haircut
+  (10 bps/side equities, 30 bps/side crypto) — paper fills are never taken at face value.
+- `briefing/`: pure deterministic template (no LLM in v1 — evidence integrity by
+  construction). Assembles regime + movers + macro events + execution failures from the
+  clean store, renders write-once markdown to `data/briefings/{date}.md` with a
+  data-provenance footer. Daily run: `uv run python -m vega.briefing` (after the ingest).
 
 ## Verification gate
 
