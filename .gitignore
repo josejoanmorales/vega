@@ -4,6 +4,7 @@
 # Runtime data (snapshots, DuckDB) — the versioned universe artifact IS committed
 data/*
 !data/universe/
+!data/calendar/
 
 # Python
 __pycache__/

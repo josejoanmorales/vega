@@ -15,8 +15,8 @@ price, percentage, or statistic from memory.
 |---|---|---|
 | `src/vega/` package root, tooling, verify gate | WI-057 | shipped |
 | `src/vega/data/` — sources, snapshots, validation, universe | WI-058 | shipped |
-| regime & event calendar | WI-059 | planned |
-| ledger + override log | WI-060 | planned |
+| `src/vega/regime/` — regime state + macro/earnings calendar | WI-059 | shipped |
+| `src/vega/ledger/` — append-only ledger + override log | WI-060 | shipped |
 | paper executor | WI-061 | planned |
 | briefing v1 | WI-062 | planned |
 
@@ -35,6 +35,27 @@ price, percentage, or statistic from memory.
 - **Universe** (`universe.py` + `data/universe/universe-v1.csv`, committed): S&P 500 +
   Nasdaq-100 + 30 ETFs + top-20 crypto, $20M median-dollar-volume filter, versions
   append-only via `scripts/refresh_universe.py`.
+
+## Regime & calendar (WI-059)
+
+- `regime.py` is a pure function over stored inputs → `RegimeState` (trend via SPY vs
+  200DMA, VIX bands, universe breadth vs own 200DMA, crypto fear/greed). Composite is
+  conservative: any red component degrades to caution; broken trend or crisis VIX = risk_off.
+- `inputs.py` fetches+snapshots ^VIX (yfinance, single-source, labeled) and alternative.me
+  fear/greed before any computation — regime only ever reads stored data.
+- `calendar.py`: committed versioned macro artifact (`data/calendar/macro-v1.csv`, FOMC +
+  CPI 2026 from official sources) + on-demand per-symbol earnings via yfinance.
+  `in_macro_window()` implements the no-entries-before-FOMC/CPI gate.
+- Zero-signup decision (Jose, 2026-07-05): no FRED/Finnhub keys; keyless equivalents.
+
+## Ledger (WI-060)
+
+- `types.py`: `Recommendation` enforces the full contract at construction — the four-part
+  exit spec (stop, time stop, profit rule, invalidation) is mandatory; a long without
+  signal attribution cannot be instantiated.
+- `store.py`: append-only JSONL with fsync per write (Caral audit-log pattern). No
+  update/delete API exists; corrections append with `supersedes`, human deviations are
+  `override` records linked to the original call. Runtime state under gitignored `data/ledger/`.
 
 ## Verification gate
 

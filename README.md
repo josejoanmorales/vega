@@ -13,6 +13,12 @@ uv sync                  # creates .venv from uv.lock (Python 3.12 auto-provisio
 
 Secrets: `cp .env.example .env` and fill in your Alpaca keys (free account, paper keys).
 
+Daily data ingest (fetch → validate → write-once clean store):
+
+```bash
+uv run python -m vega.data.ingest 7   # last 7 days
+```
+
 ## Layout
 
 - `src/vega/` — the deterministic engine (LLM never computes numbers; see `documentation/architecture.md`)

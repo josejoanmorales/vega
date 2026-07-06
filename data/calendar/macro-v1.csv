@@ -1,0 +1,24 @@
+# vega macro-event calendar v1 — built 2026-07-05, versions append-only
+# FOMC: decision dates (2nd meeting day), federalreserve.gov 2026 schedule
+# CPI: BLS release dates, official OMB/White House CY2026 PFEI schedule PDF
+date,event
+2026-01-13,CPI release
+2026-01-28,FOMC decision
+2026-02-11,CPI release
+2026-03-11,CPI release
+2026-03-18,FOMC decision
+2026-04-10,CPI release
+2026-04-29,FOMC decision
+2026-05-12,CPI release
+2026-06-10,CPI release
+2026-06-17,FOMC decision
+2026-07-14,CPI release
+2026-07-29,FOMC decision
+2026-08-12,CPI release
+2026-09-11,CPI release
+2026-09-16,FOMC decision
+2026-10-14,CPI release
+2026-10-28,FOMC decision
+2026-11-10,CPI release
+2026-12-09,FOMC decision
+2026-12-10,CPI release

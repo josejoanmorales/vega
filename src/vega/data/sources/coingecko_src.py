@@ -29,7 +29,10 @@ RawCharts = dict[str, dict[str, Any]]
 
 def _get_chart(coingecko_id: str, days: int) -> dict[str, Any]:
     url = f"{BASE_URL}/coins/{coingecko_id}/market_chart"
-    params = {"vs_currency": "usd", "days": str(days + 1), "interval": "daily"}
+    params = {"vs_currency": "usd", "days": str(days + 1)}
+    if days <= 90:
+        params["interval"] = "daily"  # free tier rejects explicit interval beyond 90 days
+
     for attempt in range(MAX_RETRIES):
         resp = requests.get(url, params=params, timeout=TIMEOUT)
         if resp.status_code == 429:

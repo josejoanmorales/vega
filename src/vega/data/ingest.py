@@ -51,9 +51,16 @@ def run(days: int = 7, root: Path = snapshot.DATA_ROOT) -> IngestSummary:
     alp_bars = alpaca_src.fetch_daily(equities, start, today)
     snapshot.snapshot_raw_frame("alpaca_iex", "bars", alp_bars, root)
 
-    bn_bars, bn_raw = binance_src.fetch_daily({e.symbol: e.binance_symbol for e in crypto}, days)
+    # CoinGecko keyless access is capped at 365 days of history — the crypto sleeve's
+    # window is capped with it so primary bars never outrun their cross-check source.
+    crypto_days = min(days, 364)
+    bn_bars, bn_raw = binance_src.fetch_daily(
+        {e.symbol: e.binance_symbol for e in crypto}, crypto_days
+    )
     snapshot.snapshot_raw_json("binance", "klines", bn_raw, root)
-    cg_bars, cg_raw = coingecko_src.fetch_daily({e.symbol: e.coingecko_id for e in crypto}, days)
+    cg_bars, cg_raw = coingecko_src.fetch_daily(
+        {e.symbol: e.coingecko_id for e in crypto}, crypto_days
+    )
     snapshot.snapshot_raw_json("coingecko", "market_chart", cg_raw, root)
 
     # strictness: only fully completed sessions enter the clean store
