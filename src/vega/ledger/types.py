@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from typing import Any
 
 ASSET_CLASSES = ("equity", "etf", "crypto")
 DIRECTIONS = ("long", "exit")
@@ -43,6 +44,12 @@ class Recommendation:
     supersedes: str | None = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: str = field(default_factory=_now_iso)
+    # Structured exit-spec params + sized qty (WI-064's risk engine is the sole writer of
+    # these; profit_rule/stop_price/time_stop_date above stay the human-auditable summary
+    # every recommendation already required — this is additive, append-only-compatible
+    # schema growth, not a contract change).
+    exit_params: dict[str, Any] | None = None
+    qty: float | None = None
 
     def __post_init__(self) -> None:
         _require(bool(self.symbol), "symbol is required")
@@ -61,3 +68,5 @@ class Recommendation:
                 len(self.signal_attribution) > 0,
                 "signal_attribution is required for long recommendations",
             )
+        if self.qty is not None:
+            _require(self.qty > 0, "qty must be positive when provided")

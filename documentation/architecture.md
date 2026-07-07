@@ -20,6 +20,7 @@ price, percentage, or statistic from memory.
 | `src/vega/execution/` — paper executor + slippage-haircut P&L | WI-061 | shipped |
 | `src/vega/briefing/` — deterministic pre-market briefing v1 | WI-062 | shipped (5-day gate running) |
 | `src/vega/backtest/` — walk-forward engine + backtest registry | WI-063 | shipped |
+| `src/vega/risk/` — sizing, portfolio heat, exit-spec writer | WI-064 | shipped |
 
 ## Data layer (WI-058)
 
@@ -107,6 +108,41 @@ anti-self-deception mechanism is structural, not disciplinary:
 - `vega.common.appendlog`: the shared append-only+fsync primitive `ledger/store.py` was
   refactored onto (behavior-preserving) so the registry and the ledger share one audited
   I/O path instead of two copies of the same durability logic.
+
+## Risk engine (WI-064) — the second highest-stakes module
+
+Sizing and exits determine P&L more than entries do. Pure math over stored data; the
+single writer of exit specs consumed by the ledger, the backtester, and briefing v2.
+
+- `sizing.py`: gap-stressed sizing (`STOP_ATR_MULT` k=2.0 equity/2.5 crypto,
+  `GAP_STRESS_MULT` G=2.5 equity/2.0 crypto). The `min(base, gap)` formula
+  algebraically guarantees nominal risk ≤1R and gap-stressed worst case ≤2R for
+  *any* positive k/G — proven by the live smoke test landing exactly at 2.00R for
+  both an equity and a crypto proposal. A 1.5R clamp sits on top as a defensive
+  invariant against a future caller bypassing the formula (`vega.common.atr` supplies
+  the shared ATR — extracted from `backtest/simulate.py` so live sizing and backtest
+  simulation can never silently diverge on stop-distance math).
+- `clusters.py`: deliberately dumb bucket assignment (`us_equity_beta`, `rates`
+  — TLT/IEF, `commodities` — GLD/SLV/USO/XME, `crypto_beta`), not covariance. The one
+  real correlation computed: a 90-day trailing Pearson of a crypto symbol's returns
+  against SPY; above 0.5 it counts 50% of that position's R into `us_equity_beta`
+  too — the reason "separate sleeves" isn't actually safe. Unmeasurable correlation
+  (insufficient history) is treated as non-contaminating, never assumed.
+- `heat.py`: position heat = `qty * max(entry - current_stop, 0)`, floored at 0 so a
+  stop trailed past breakeven frees heat for new risk. Caps: 6R total (3R when regime
+  is `caution`), 4R `us_equity_beta`, 2.5R `crypto_beta`, 3R `rates`/`commodities`.
+- `gates.py`: regime `risk_off` blocks all new entries; `in_macro_window` blocks T-1/T
+  of FOMC/CPI (both sleeves); `next_earnings` within the horizon rejects (v1 has no
+  earnings-play exceptions).
+- `engine.py`: `propose()` orchestrates gates → ATR/sizing → cluster/heat-cap check →
+  `SizedProposal | Rejection`, emitting the full exit spec (stop, calendar-approximate
+  time stop, structured profit rule, invalidation). `to_recommendation()` bridges a
+  proposal straight into a valid `ledger.types.Recommendation` (which gained optional
+  `exit_params`/`qty` fields — additive, append-only-compatible schema growth).
+  Executor's fixed-notional placeholder is replaced when WI-067 wires this in.
+- Live smoke (`uv run python -m vega.risk`): real Alpaca paper equity ($99,900.90),
+  real regime, real store — AAPL and BTC proposals both size to exactly 2.00R worst
+  case, correctly clustered, round-trip into valid ledger entries.
 
 ## Verification gate
 

@@ -26,8 +26,8 @@ import pandas as pd
 from vega.backtest.costs import apply_cost, cost_bps
 from vega.backtest.market_view import MarketView
 from vega.backtest.signals import EntryProposal, Signal
+from vega.common.atr import compute_atr
 
-ATR_PERIOD = 14
 MEDIAN_VOLUME_WINDOW = 60
 
 
@@ -74,30 +74,6 @@ class TradeRecord:
     realized_pnl: float
     r_multiple: float
     unresolved_at_end: bool
-
-
-def _true_range(prev_close: float, high: float, low: float) -> float:
-    return max(high - low, abs(high - prev_close), abs(low - prev_close))
-
-
-def compute_atr(
-    frame: pd.DataFrame, symbol: str, as_of: str, period: int = ATR_PERIOD
-) -> float | None:
-    """Raw-OHLC ATR through `as_of` inclusive. None if there isn't enough history."""
-    bars = (
-        frame[(frame["symbol"] == symbol) & (frame["date"] <= as_of)]
-        .sort_values("date")
-        .tail(period + 1)
-    )
-    if len(bars) < period + 1:
-        return None
-    trs = [
-        _true_range(prev, high, low)
-        for prev, high, low in zip(
-            bars["close"].iloc[:-1], bars["high"].iloc[1:], bars["low"].iloc[1:], strict=True
-        )
-    ]
-    return sum(trs) / len(trs)
 
 
 def _median_dollar_volume(frame: pd.DataFrame, symbol: str, as_of: str) -> float:
