@@ -24,7 +24,7 @@ TRADING_DAYS_PER_YEAR = {"equity": 252, "etf": 252, "crypto": 365}
 
 @dataclass(frozen=True)
 class FoldMetrics:
-    n_trades: int
+    n_trades: int  # RESOLVED trades only — end-of-window force-closes never count as sample
     n_closed_exits: int
     total_pnl: float
     cagr: float | None
@@ -33,6 +33,7 @@ class FoldMetrics:
     exposure_pct: float
     benchmark_return: float | None
     benchmark_max_drawdown: float | None
+    n_unresolved: int = 0  # force-closed at window end; P&L included, sample count excluded
 
 
 def _daily_pnl(trades: list[TradeRecord], dates: list[str]) -> pd.Series:
@@ -71,6 +72,7 @@ def compute_fold_metrics(
     if not dates:
         return FoldMetrics(0, 0, 0.0, None, None, None, 0.0, None, None)
 
+    resolved = [t for t in trades if not t.unresolved_at_end]
     daily_pnl = _daily_pnl(trades, dates)
     equity = starting_capital + daily_pnl.cumsum()
     returns = equity.pct_change().dropna()
@@ -92,10 +94,12 @@ def compute_fold_metrics(
     if benchmark_closes is not None and len(benchmark_closes) > 1:
         bh_return = float(benchmark_closes.iloc[-1] / benchmark_closes.iloc[0] - 1.0)
         benchmark_return = round(bh_return * exposure / 100.0, 4)  # cash=0, exposure-scaled
-        benchmark_dd = _max_drawdown(benchmark_closes)
+        # drawdown scaled by the same exposure so the engine's cap compares like with like
+        # (linear approximation, consistent with the return scaling above)
+        benchmark_dd = _max_drawdown(benchmark_closes) * exposure / 100.0
 
     return FoldMetrics(
-        n_trades=len(trades),
+        n_trades=len(resolved),
         n_closed_exits=sum(len(t.exits) for t in trades),
         total_pnl=round(float(daily_pnl.sum()), 2),
         cagr=round(cagr, 4) if cagr is not None else None,
@@ -104,7 +108,17 @@ def compute_fold_metrics(
         exposure_pct=exposure,
         benchmark_return=benchmark_return,
         benchmark_max_drawdown=round(benchmark_dd, 4) if benchmark_dd is not None else None,
+        n_unresolved=len(trades) - len(resolved),
     )
+
+
+def _trade_weighted(pairs: list[tuple[float, int]], decimals: int) -> float | None:
+    """Mean weighted by each fold's resolved-trade count — a 2-trade fold must not
+    count as much as a 500-trade fold when the result drives the promotion verdict."""
+    total_weight = sum(w for _, w in pairs)
+    if total_weight == 0:
+        return None
+    return round(sum(v * w for v, w in pairs) / total_weight, decimals)
 
 
 def aggregate_metrics(fold_metrics: list[FoldMetrics]) -> FoldMetrics:
@@ -112,9 +126,11 @@ def aggregate_metrics(fold_metrics: list[FoldMetrics]) -> FoldMetrics:
     total_trades = sum(f.n_trades for f in fold_metrics)
     if total_trades == 0:
         return FoldMetrics(0, 0, 0.0, None, None, None, 0.0, None, None)
-    sharpes = [f.sharpe for f in fold_metrics if f.sharpe is not None]
+    sharpes = [(f.sharpe, f.n_trades) for f in fold_metrics if f.sharpe is not None]
     dds = [f.max_drawdown for f in fold_metrics if f.max_drawdown is not None]
-    bench_returns = [f.benchmark_return for f in fold_metrics if f.benchmark_return is not None]
+    bench_returns = [
+        (f.benchmark_return, f.n_trades) for f in fold_metrics if f.benchmark_return is not None
+    ]
     bench_dds = [
         f.benchmark_max_drawdown for f in fold_metrics if f.benchmark_max_drawdown is not None
     ]
@@ -123,11 +139,10 @@ def aggregate_metrics(fold_metrics: list[FoldMetrics]) -> FoldMetrics:
         n_closed_exits=sum(f.n_closed_exits for f in fold_metrics),
         total_pnl=round(sum(f.total_pnl for f in fold_metrics), 2),
         cagr=None,  # not meaningful compounded blindly across non-contiguous folds
-        sharpe=round(sum(sharpes) / len(sharpes), 3) if sharpes else None,
+        sharpe=_trade_weighted(sharpes, 3),
         max_drawdown=round(min(dds), 4) if dds else None,  # worst across folds
         exposure_pct=round(sum(f.exposure_pct for f in fold_metrics) / len(fold_metrics), 2),
-        benchmark_return=round(sum(bench_returns) / len(bench_returns), 4)
-        if bench_returns
-        else None,
+        benchmark_return=_trade_weighted(bench_returns, 4),
         benchmark_max_drawdown=round(min(bench_dds), 4) if bench_dds else None,
+        n_unresolved=sum(f.n_unresolved for f in fold_metrics),
     )

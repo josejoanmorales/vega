@@ -169,13 +169,16 @@ def simulate_signal(
     for i, date in enumerate(dates):
         today = by_date_symbol.get(date, {})
         prior_date = dates[i - 1] if i > 0 else None
+        # Cost tiering uses the PRIOR session's dollar-volume window everywhere —
+        # today's own close*volume is unknowable at the open being filled.
+        tier_asof = prior_date if prior_date is not None else date
 
         # 0. fill queued time-stop exits at today's open (retry next day if no bar)
         for symbol, pos in list(pending_exits.items()):
             row = today.get(symbol)
             if row is None:
                 continue
-            price = apply_cost(float(row.open), "sell", _bps(symbol, date))
+            price = apply_cost(float(row.open), "sell", _bps(symbol, tier_asof))
             pos.exits.append(
                 {"date": date, "qty": pos.remaining_qty, "price": price, "reason": "time_stop"}
             )
@@ -191,7 +194,7 @@ def simulate_signal(
             if atr is None or atr <= 0:
                 del pending_entries[symbol]
                 continue
-            fill_price = apply_cost(float(row.open), "buy", _bps(symbol, date))
+            fill_price = apply_cost(float(row.open), "buy", _bps(symbol, tier_asof))
             stop_price = fill_price - proposal.stop_atr_mult * atr
             if stop_price <= 0:
                 del pending_entries[symbol]
@@ -224,7 +227,7 @@ def simulate_signal(
             row = today.get(symbol)
             if row is None:
                 continue
-            bps = _bps(symbol, date)
+            bps = _bps(symbol, tier_asof)
             if float(row.open) <= pos.stop_price:
                 price = apply_cost(float(row.open), "sell", bps)
                 pos.exits.append(
@@ -240,6 +243,12 @@ def simulate_signal(
                 )
                 _finalize(pos, unresolved=False)
                 del open_positions[symbol]
+                continue
+
+            # No profit-taking on the entry bar itself: a same-bar profit fill is the
+            # optimistic sibling of the same-bar fills the doctrine forbids (same-day
+            # STOP-outs above stay — those are the pessimistic direction).
+            if pos.entry_date == date:
                 continue
 
             if not pos.took_partial:
@@ -259,8 +268,12 @@ def simulate_signal(
                 trail = pos.high_water_close - pos.profit_trail_atr_mult * pos.atr_at_entry
                 pos.stop_price = max(pos.stop_price, trail)  # a trail only ever tightens
 
-        # 3. time-stop trigger for positions still open after today's management
+        # 3. time-stop trigger for positions still open after today's management.
+        # The entry bar does not count as a held session — time_stop_days=N means
+        # N full sessions AFTER entry.
         for symbol, pos in list(open_positions.items()):
+            if pos.entry_date == date:
+                continue
             pos.sessions_held += 1
             if pos.sessions_held >= pos.time_stop_days:
                 pending_exits[symbol] = pos
@@ -278,12 +291,16 @@ def simulate_signal(
         else:
             pending_entries = {}
 
-    # end of window: force-close everything still open or queued, at the last close
+    # end of window: force-close everything still open or queued. These are accounting
+    # closes, not real trades — they pay full sell costs (no zero-cost path exists, even
+    # here) and are finalized unresolved, which excludes them from the sample-size gate.
     last_date = dates[-1]
     last_bars = by_date_symbol.get(last_date, {})
+    tier_asof = dates[-2] if len(dates) > 1 else last_date
     for pos in list(open_positions.values()) + list(pending_exits.values()):
         row = last_bars.get(pos.symbol)
-        price = float(row.close) if row is not None else pos.stop_price
+        raw_price = float(row.close) if row is not None else pos.stop_price
+        price = apply_cost(raw_price, "sell", _bps(pos.symbol, tier_asof))
         pos.exits.append(
             {"date": last_date, "qty": pos.remaining_qty, "price": price, "reason": "end_of_data"}
         )

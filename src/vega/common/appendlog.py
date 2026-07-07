@@ -23,9 +23,13 @@ class AppendLog:
         return self._path
 
     def append(self, record: dict[str, Any]) -> None:
+        # No default=str: a non-JSON-native value (numpy scalar, Timestamp, Decimal)
+        # must raise HERE, at the write site, not be silently stringified into an
+        # append-only audit log and break a reader far from the bug.
+        line = json.dumps(record, sort_keys=True)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a") as fh:
-            fh.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+            fh.write(line + "\n")
             fh.flush()
             os.fsync(fh.fileno())
 
@@ -36,4 +40,6 @@ class AppendLog:
             return [json.loads(line) for line in fh]
 
     def records_of_type(self, kind: str) -> list[dict[str, Any]]:
-        return [r for r in self.records() if r.get("type") == kind]
+        # r["type"], not r.get("type"): a record missing its type is corruption and
+        # must raise, not silently vanish from an audit log that then looks clean.
+        return [r for r in self.records() if r["type"] == kind]

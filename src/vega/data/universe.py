@@ -6,6 +6,7 @@ Versions are append-only: a refresh produces universe-v{N+1}.csv, never mutates 
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 from vega.data.types import ASSET_CLASSES, UniverseEntry
@@ -36,10 +37,18 @@ def load_universe(path: Path = DEFAULT_ARTIFACT) -> list[UniverseEntry]:
     return entries
 
 
-def universe_version(path: Path = DEFAULT_ARTIFACT) -> str:
-    """e.g. 'universe-v1.csv' -> 'v1' — recorded on every backtest run for provenance."""
-    stem = path.stem
-    return stem.split("-")[-1] if "-" in stem else stem
+def universe_version(directory: Path = DEFAULT_ARTIFACT.parent) -> str:
+    """Highest version present in `directory` (e.g. 'v2'), or 'unknown' if none.
+
+    Recorded on every backtest run for provenance — 'unknown' is honest;
+    a hardcoded guess would let the append-only registry lie.
+    """
+    versions = sorted(
+        int(m.group(1))
+        for p in directory.glob("universe-v*.csv")
+        if (m := re.search(r"universe-v(\d+)", p.stem))
+    )
+    return f"v{versions[-1]}" if versions else "unknown"
 
 
 def symbols(entries: list[UniverseEntry], *classes: str) -> list[str]:

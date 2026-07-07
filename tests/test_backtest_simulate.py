@@ -135,13 +135,15 @@ def test_intraday_stop_touch_fills_at_stop_price_not_low() -> None:
     assert exit_["price"] == pytest.approx(apply_cost(stop_price, "sell", LIQUID_BPS))
 
 
-def test_time_stop_exits_at_open_of_the_session_after_expiry() -> None:
+def test_time_stop_exits_after_n_full_sessions_not_counting_entry_bar() -> None:
     pre = _flat_history("TEST", _dates(20))
-    holding_days = _flat_history("TEST", ["2026-02-21", "2026-02-22", "2026-02-23"])
+    # entry fills 02-21; held sessions are 22, 23, 24 (entry bar does NOT count);
+    # time_stop_days=3 queues the exit on the 24th, filling at the 25th's open.
+    holding_days = _flat_history("TEST", ["2026-02-21", "2026-02-22", "2026-02-23", "2026-02-24"])
     exit_day = [
         {
             "symbol": "TEST",
-            "date": "2026-02-24",
+            "date": "2026-02-25",
             "open": 105.0,
             "high": 106.0,
             "low": 104.0,
@@ -153,10 +155,10 @@ def test_time_stop_exits_at_open_of_the_session_after_expiry() -> None:
     frame = pd.DataFrame(pre + holding_days + exit_day)
     signal = _FixedSignal(fire_on=DECISION_DATE, time_stop_days=3)
 
-    trades = simulate_signal(frame, _dates(24), signal, ["TEST"], "equity")
+    trades = simulate_signal(frame, _dates(25), signal, ["TEST"], "equity")
     assert len(trades) == 1
     exit_ = trades[0].exits[0]
-    assert exit_["date"] == "2026-02-24" and exit_["reason"] == "time_stop"
+    assert exit_["date"] == "2026-02-25" and exit_["reason"] == "time_stop"
     assert exit_["price"] == pytest.approx(apply_cost(105.0, "sell", LIQUID_BPS))
 
 
@@ -164,7 +166,8 @@ def test_profit_partial_then_trail_only_ever_tightens() -> None:
     pre = _flat_history("TEST", _dates(20))
     entry_price = apply_cost(100.0, "buy", LIQUID_BPS)
     atr = 2.0
-    # day 1: hits the (lowered, for test ease) profit target -> half exits, trail initializes
+    # day 1 = ENTRY BAR: its high reaches the target, but same-bar profit-taking is
+    # forbidden by doctrine — the partial must NOT fire today
     d1 = [
         {
             "symbol": "TEST",
@@ -177,7 +180,7 @@ def test_profit_partial_then_trail_only_ever_tightens() -> None:
             "volume": 1_000_000.0,
         }
     ]
-    # day 2: a down day, but still above the day-1 trail (98) -> trail must NOT loosen
+    # day 2: high stays below the target -> still no partial
     d2 = [
         {
             "symbol": "TEST",
@@ -190,7 +193,8 @@ def test_profit_partial_then_trail_only_ever_tightens() -> None:
             "volume": 1_000_000.0,
         }
     ]
-    # day 3: a new high -> trail tightens further (up)
+    # day 3: high crosses the target -> partial fires HERE (first non-entry bar to reach
+    # it), high-water = close 110, trail = 110 - 2.5*2.0 = 105
     d3 = [
         {
             "symbol": "TEST",
@@ -226,10 +230,10 @@ def test_profit_partial_then_trail_only_ever_tightens() -> None:
     assert len(t.exits) == 2
     partial, final = t.exits
     assert partial["reason"] == "profit_partial"
+    assert partial["date"] == "2026-02-23"  # NOT the entry bar (2026-02-21), despite its high
     assert partial["price"] == pytest.approx(apply_cost(target, "sell", LIQUID_BPS))
     assert partial["qty"] == pytest.approx(t.initial_qty / 2)
-    # trail after day1 (close=103): 103 - 2.5*2.0 = 98; day2 down-close=90 must not loosen it;
-    # day3 up-close=110 tightens it to 110 - 2.5*2.0 = 105 -> day4 open=100 gaps under 105
+    # trail from day3's high-water (110 - 2.5*2.0 = 105) -> day4 open=100 gaps under it
     assert final["reason"] == "gap_stop"
     assert final["price"] == pytest.approx(apply_cost(100.0, "sell", LIQUID_BPS))
 
@@ -252,4 +256,20 @@ def test_unresolved_position_force_closed_at_end_of_window() -> None:
     signal = _FixedSignal(fire_on=DECISION_DATE)
     trades = simulate_signal(frame, _dates(21), signal, ["TEST"], "equity")
     assert trades[0].unresolved_at_end is True
-    assert trades[0].exits[0]["reason"] == "end_of_data"
+    exit_ = trades[0].exits[0]
+    assert exit_["reason"] == "end_of_data"
+    # even the accounting force-close pays full sell costs — no zero-cost path exists
+    assert exit_["price"] == pytest.approx(apply_cost(100.0, "sell", LIQUID_BPS))
+
+
+def test_unresolved_trades_never_count_toward_the_sample_gate() -> None:
+    from vega.backtest.metrics import compute_fold_metrics
+
+    pre = _flat_history("TEST", _dates(20))
+    fill_day = _flat_history("TEST", [FILL_DATE])
+    frame = pd.DataFrame(pre + fill_day)
+    trades = simulate_signal(
+        frame, _dates(21), _FixedSignal(fire_on=DECISION_DATE), ["TEST"], "equity"
+    )
+    m = compute_fold_metrics(trades, _dates(21), starting_capital=10_000.0, asset_class="equity")
+    assert m.n_trades == 0 and m.n_unresolved == 1

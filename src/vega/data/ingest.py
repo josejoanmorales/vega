@@ -21,39 +21,40 @@ from vega.data.validate import CrossCheckResult, cross_check
 
 @dataclass(frozen=True)
 class IngestSummary:
-    clean_rows: int
-    quarantined_rows: int
-    skipped_dates: int
+    clean_rows: int  # rows actually added to the store this run
+    quarantined_rows: int  # quarantine rows actually added this run
+    frozen_rows: int  # incoming rows skipped because their (symbol, date) is frozen
+    drift_rows: int  # frozen rows whose freshly fetched close differed (vendor revision)
     dates: tuple[str, ...]
 
 
 def _write_result(
     result: CrossCheckResult, sleeve: str, root: Path
-) -> tuple[int, int, int, set[str]]:
-    """Write-once per date, skipping dates already in the store.
+) -> tuple[int, int, int, int, set[str]]:
+    """Per-(symbol, date) write-once merge — the policy lives in snapshot.merge_clean.
 
-    Vendors revise historical values retroactively (yfinance adjusts past
+    Vendors revise historical values retroactively (yfinance restates past
     adjusted-close when new dividends are declared), so a wider re-ingest
-    routinely sees different content for dates it already wrote. That is
-    expected drift, not corruption — the frozen clean store stays frozen,
-    and only genuinely new dates are added.
+    routinely disagrees with frozen rows. Frozen rows stay frozen; genuinely
+    new (symbol, date) rows — including symbols absent from an already-written
+    date — are appended; drift against frozen rows is counted, not raised.
     """
     dates: set[str] = set()
-    skipped = 0
-    for date, group in result.clean.groupby("date"):
-        name = f"bars_{sleeve}"
-        if snapshot.has_clean(str(date), name, root):
-            skipped += 1
-            continue
-        snapshot.write_clean(str(date), name, group.reset_index(drop=True), root)
-        dates.add(str(date))
-    for date, group in result.quarantine.groupby("date"):
-        name = f"quarantine_{sleeve}"
-        if snapshot.has_clean(str(date), name, root):
-            continue
-        snapshot.write_clean(str(date), name, group.reset_index(drop=True), root)
-        dates.add(str(date))
-    return len(result.clean), len(result.quarantine), skipped, dates
+    added = quarantined = frozen = drift = 0
+    all_dates = sorted(set(result.clean["date"]) | set(result.quarantine["date"]))
+    for date in all_dates:
+        day_bars = result.clean[result.clean["date"] == date].reset_index(drop=True)
+        day_quar = result.quarantine[result.quarantine["date"] == date].reset_index(drop=True)
+        b, q, f, d = snapshot.merge_clean(
+            str(date), f"bars_{sleeve}", f"quarantine_{sleeve}", day_bars, day_quar, root
+        )
+        added += b
+        quarantined += q
+        frozen += f
+        drift += d
+        if b or q:
+            dates.add(str(date))
+    return added, quarantined, frozen, drift, dates
 
 
 def run(days: int = 7, root: Path = snapshot.DATA_ROOT) -> IngestSummary:
@@ -89,14 +90,15 @@ def run(days: int = 7, root: Path = snapshot.DATA_ROOT) -> IngestSummary:
     eq_result = cross_check(yf_bars, alp_bars)
     cr_result = cross_check(bn_bars, cg_bars)
 
-    eq_clean, eq_bad, eq_skip, eq_dates = _write_result(eq_result, "equity", root)
-    cr_clean, cr_bad, cr_skip, cr_dates = _write_result(cr_result, "crypto", root)
+    eq_clean, eq_bad, eq_frozen, eq_drift, eq_dates = _write_result(eq_result, "equity", root)
+    cr_clean, cr_bad, cr_frozen, cr_drift, cr_dates = _write_result(cr_result, "crypto", root)
     snapshot.refresh_catalog(root)
 
     return IngestSummary(
         clean_rows=eq_clean + cr_clean,
         quarantined_rows=eq_bad + cr_bad,
-        skipped_dates=eq_skip + cr_skip,
+        frozen_rows=eq_frozen + cr_frozen,
+        drift_rows=eq_drift + cr_drift,
         dates=tuple(sorted(eq_dates | cr_dates)),
     )
 
@@ -106,8 +108,9 @@ def main() -> None:
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 7
     s = run(days)
     print(
-        f"ingest ok — clean rows: {s.clean_rows}, quarantined: {s.quarantined_rows}, "
-        f"already-in-store (skipped): {s.skipped_dates}, new dates: {', '.join(s.dates) or 'none'}"
+        f"ingest ok — added: {s.clean_rows} clean / {s.quarantined_rows} quarantined, "
+        f"frozen (already stored): {s.frozen_rows}, vendor drift on frozen rows: {s.drift_rows}, "
+        f"dates touched: {len(s.dates)}"
     )
 
 

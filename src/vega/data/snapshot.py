@@ -78,6 +78,65 @@ def write_clean(date: str, name: str, frame: pd.DataFrame, root: Path = DATA_ROO
     return path
 
 
+def merge_clean(
+    date: str,
+    bars_name: str,
+    quarantine_name: str,
+    bars: pd.DataFrame,
+    quarantine: pd.DataFrame,
+    root: Path = DATA_ROOT,
+) -> tuple[int, int, int, int]:
+    """Per-(symbol, date) write-once across a bars/quarantine file pair.
+
+    A symbol already present on EITHER side for this date is frozen — its rows
+    are never modified or contradicted (no mixed-vintage partitions, no
+    stale-quarantine flips, no silent rewrites). Symbols present in neither
+    file are appended to whichever side this run assigns them — so a symbol
+    missing from an old date (short listing history, later universe extension,
+    or an originally quarantined day whose data was never stored) can still
+    enter the store, instead of being dropped because the date's file exists.
+
+    Returns (bars_added, quarantine_added, frozen_skipped, drift_rows).
+    drift_rows counts frozen bars whose freshly fetched close differs — the
+    detection signal the old SnapshotConflictError provided, kept as
+    observability instead of a crash (vendor revisions are routine).
+    """
+    bars_path = clean_path(date, bars_name, root)
+    quar_path = clean_path(date, quarantine_name, root)
+    existing_bars = pd.read_parquet(bars_path) if bars_path.exists() else None
+    existing_quar = pd.read_parquet(quar_path) if quar_path.exists() else None
+
+    frozen: set[str] = set()
+    if existing_bars is not None:
+        frozen |= set(existing_bars["symbol"])
+    if existing_quar is not None:
+        frozen |= set(existing_quar["symbol"])
+
+    drift = 0
+    if existing_bars is not None and not bars.empty:
+        overlap = existing_bars[["symbol", "close"]].merge(
+            bars[["symbol", "close"]], on="symbol", suffixes=("_old", "_new")
+        )
+        drift = int((overlap["close_old"] != overlap["close_new"]).sum())
+
+    new_bars = bars[~bars["symbol"].isin(frozen)]
+    new_quar = quarantine[~quarantine["symbol"].isin(frozen)]
+    frozen_skipped = (len(bars) - len(new_bars)) + (len(quarantine) - len(new_quar))
+
+    def _extend(path: Path, existing: pd.DataFrame | None, new: pd.DataFrame) -> None:
+        if new.empty:
+            return
+        combined = new if existing is None else pd.concat([existing, new], ignore_index=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp.parquet")
+        combined.reset_index(drop=True).to_parquet(tmp, index=False)
+        tmp.rename(path)
+
+    _extend(bars_path, existing_bars, new_bars)
+    _extend(quar_path, existing_quar, new_quar)
+    return len(new_bars), len(new_quar), frozen_skipped, drift
+
+
 def refresh_catalog(root: Path = DATA_ROOT) -> None:
     """(Re)build DuckDB views over the clean parquet tree (skips views with no files yet)."""
     views = {

@@ -126,7 +126,8 @@ def test_every_run_is_recorded_regardless_of_verdict(tmp_path: Path) -> None:
         registry=reg,
     )
     assert len(reg.runs()) == 1
-    assert reg.runs()[0]["universe_version"] == "v1"
+    # tmp root has no universe artifact — provenance must say so, never guess a version
+    assert reg.runs()[0]["universe_version"] == "unknown"
 
 
 def test_a_clear_winning_signal_with_enough_trades_passes_and_touches_holdout_once(

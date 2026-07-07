@@ -121,12 +121,18 @@ def run_backtest(
         prior_grid = reg.cumulative_grid_points(signal.family)
         promotion_bar = reg.promotion_bar(prior_grid + param_grid_size)
         sharpe_ok = agg.sharpe is not None and agg.sharpe >= promotion_bar
-        dd_ok = (
-            agg.max_drawdown is None
-            or agg.benchmark_max_drawdown is None
-            or agg.benchmark_max_drawdown == 0
-            or abs(agg.max_drawdown) <= MAX_DD_MULTIPLE * abs(agg.benchmark_max_drawdown)
-        )
+        # fail-closed: if the benchmark drawdown can't be computed, the cap cannot be
+        # validated, so it does NOT pass — except a strategy with zero drawdown, which
+        # trivially satisfies any cap.
+        strat_dd = agg.max_drawdown
+        bench_dd = agg.benchmark_max_drawdown
+        if strat_dd is None or strat_dd == 0:
+            dd_ok = True
+        elif bench_dd is None or bench_dd == 0:
+            dd_ok = False
+            notes.append("benchmark drawdown unavailable/zero — drawdown cap fails closed")
+        else:
+            dd_ok = abs(strat_dd) <= MAX_DD_MULTIPLE * abs(bench_dd)
         if sharpe_ok and dd_ok:
             verdict = "pass"
             holdout_evaluated = True
@@ -166,7 +172,7 @@ def run_backtest(
         signal_family=signal.family,
         signal_version=signal.version,
         param_grid_size=param_grid_size,
-        universe_version=universe_version(),
+        universe_version=universe_version(root / "universe"),
         data_span=(all_dates[0], all_dates[-1]),
         n_folds=len(folds),
         fold_metrics=fold_metrics_payload,
