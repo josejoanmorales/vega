@@ -23,18 +23,37 @@ from vega.data.validate import CrossCheckResult, cross_check
 class IngestSummary:
     clean_rows: int
     quarantined_rows: int
+    skipped_dates: int
     dates: tuple[str, ...]
 
 
-def _write_result(result: CrossCheckResult, sleeve: str, root: Path) -> tuple[int, int, set[str]]:
+def _write_result(
+    result: CrossCheckResult, sleeve: str, root: Path
+) -> tuple[int, int, int, set[str]]:
+    """Write-once per date, skipping dates already in the store.
+
+    Vendors revise historical values retroactively (yfinance adjusts past
+    adjusted-close when new dividends are declared), so a wider re-ingest
+    routinely sees different content for dates it already wrote. That is
+    expected drift, not corruption — the frozen clean store stays frozen,
+    and only genuinely new dates are added.
+    """
     dates: set[str] = set()
+    skipped = 0
     for date, group in result.clean.groupby("date"):
-        snapshot.write_clean(str(date), f"bars_{sleeve}", group.reset_index(drop=True), root)
+        name = f"bars_{sleeve}"
+        if snapshot.has_clean(str(date), name, root):
+            skipped += 1
+            continue
+        snapshot.write_clean(str(date), name, group.reset_index(drop=True), root)
         dates.add(str(date))
     for date, group in result.quarantine.groupby("date"):
-        snapshot.write_clean(str(date), f"quarantine_{sleeve}", group.reset_index(drop=True), root)
+        name = f"quarantine_{sleeve}"
+        if snapshot.has_clean(str(date), name, root):
+            continue
+        snapshot.write_clean(str(date), name, group.reset_index(drop=True), root)
         dates.add(str(date))
-    return len(result.clean), len(result.quarantine), dates
+    return len(result.clean), len(result.quarantine), skipped, dates
 
 
 def run(days: int = 7, root: Path = snapshot.DATA_ROOT) -> IngestSummary:
@@ -70,13 +89,14 @@ def run(days: int = 7, root: Path = snapshot.DATA_ROOT) -> IngestSummary:
     eq_result = cross_check(yf_bars, alp_bars)
     cr_result = cross_check(bn_bars, cg_bars)
 
-    eq_clean, eq_bad, eq_dates = _write_result(eq_result, "equity", root)
-    cr_clean, cr_bad, cr_dates = _write_result(cr_result, "crypto", root)
+    eq_clean, eq_bad, eq_skip, eq_dates = _write_result(eq_result, "equity", root)
+    cr_clean, cr_bad, cr_skip, cr_dates = _write_result(cr_result, "crypto", root)
     snapshot.refresh_catalog(root)
 
     return IngestSummary(
         clean_rows=eq_clean + cr_clean,
         quarantined_rows=eq_bad + cr_bad,
+        skipped_dates=eq_skip + cr_skip,
         dates=tuple(sorted(eq_dates | cr_dates)),
     )
 
@@ -87,7 +107,7 @@ def main() -> None:
     s = run(days)
     print(
         f"ingest ok — clean rows: {s.clean_rows}, quarantined: {s.quarantined_rows}, "
-        f"dates: {', '.join(s.dates)}"
+        f"already-in-store (skipped): {s.skipped_dates}, new dates: {', '.join(s.dates) or 'none'}"
     )
 
 

@@ -19,6 +19,7 @@ price, percentage, or statistic from memory.
 | `src/vega/ledger/` — append-only ledger + override log | WI-060 | shipped |
 | `src/vega/execution/` — paper executor + slippage-haircut P&L | WI-061 | shipped |
 | `src/vega/briefing/` — deterministic pre-market briefing v1 | WI-062 | shipped (5-day gate running) |
+| `src/vega/backtest/` — walk-forward engine + backtest registry | WI-063 | shipped |
 
 ## Data layer (WI-058)
 
@@ -35,6 +36,12 @@ price, percentage, or statistic from memory.
 - **Universe** (`universe.py` + `data/universe/universe-v1.csv`, committed): S&P 500 +
   Nasdaq-100 + 30 ETFs + top-20 crypto, $20M median-dollar-volume filter, versions
   append-only via `scripts/refresh_universe.py`.
+- **Incremental ingest** (`ingest.py`, fixed during WI-063's backfill): vendors revise
+  historical values retroactively — yfinance restates past adjusted-close when a new
+  dividend is declared — so a wider re-ingest routinely sees different content for dates
+  already in the clean store. That's expected drift, not corruption; `has_clean()` lets
+  `_write_result` skip dates already written instead of raising `SnapshotConflictError`,
+  so the frozen store stays frozen and only genuinely new dates are added.
 
 ## Regime & calendar (WI-059)
 
@@ -70,6 +77,36 @@ price, percentage, or statistic from memory.
   construction). Assembles regime + movers + macro events + execution failures from the
   clean store, renders write-once markdown to `data/briefings/{date}.md` with a
   data-provenance footer. Daily run: `uv run python -m vega.briefing` (after the ingest).
+
+## Backtest engine (WI-063) — the highest-stakes module in the codebase
+
+A subtle bug here silently invalidates every accuracy claim Vega will ever make. Every
+anti-self-deception mechanism is structural, not disciplinary:
+
+- `market_view.py`: a `MarketView` filters to `date <= as_of` on every read — a signal
+  physically cannot see a future row. Signals receive ONLY a `MarketView`, never a frame.
+- `simulate.py`: decisions at the close of session T fill at T+1's **open** (no same-bar-close
+  fills exist). Stops are gap-aware (open-through-stop fills at the open, never the stop
+  price). Signal trend logic uses `adj_close`; stop distance (ATR) and all fills use raw
+  OHLC — the space fills actually happen in. Costs (`costs.py`) are applied inside the one
+  fill function every trade passes through, deliberately calibrated at or above the live
+  paper-execution haircuts (`execution/pnl.py`) so a backtest is always the pessimistic estimate.
+- `folds.py`: a locked 20%-recent holdout plus expanding-window walk-forward folds on the
+  remaining dev segment (~quarterly test slices).
+- `registry.py`: append-only (built on `vega.common.appendlog`, shared with the ledger).
+  An unregistered backtest cannot promote. The promotion Sharpe bar rises with cumulative
+  param-grid points tried per signal family (`0.8 + 0.1·log10(trials)`) — a crude,
+  auditable stand-in for proper multiple-testing correction. Holdout touches are counted
+  per family and flagged if a family burns its holdout more than once.
+- `engine.py`: orchestrates dev walk-forward → verdict (`insufficient_sample` below 30
+  closed trades, `pass`/`fail` against the promotion bar and a 1.5× benchmark-drawdown
+  cap, or `non_promotable_placeholder` for fixture signals) → holdout run **only** when
+  the dev verdict is `pass` for a promotable signal. Live smoke test (`SmaCrossSignal`,
+  `promotable=False`): 6 dev folds, 3,446 trades, verdict `non_promotable_placeholder`,
+  holdout never touched — proves the pipeline without ever burning the holdout on a fixture.
+- `vega.common.appendlog`: the shared append-only+fsync primitive `ledger/store.py` was
+  refactored onto (behavior-preserving) so the registry and the ledger share one audited
+  I/O path instead of two copies of the same durability logic.
 
 ## Verification gate
 

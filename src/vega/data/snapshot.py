@@ -47,9 +47,24 @@ def snapshot_raw_frame(source: str, name: str, frame: pd.DataFrame, root: Path =
     return path
 
 
+def clean_path(date: str, name: str, root: Path = DATA_ROOT) -> Path:
+    return root / "clean" / date / f"{name}.parquet"
+
+
+def has_clean(date: str, name: str, root: Path = DATA_ROOT) -> bool:
+    return clean_path(date, name, root).exists()
+
+
 def write_clean(date: str, name: str, frame: pd.DataFrame, root: Path = DATA_ROOT) -> Path:
-    """Write-once per data date. Identical rewrite = no-op; different content raises."""
-    path = root / "clean" / date / f"{name}.parquet"
+    """Write-once per data date. Identical rewrite = no-op; different content raises.
+
+    Vendors (yfinance in particular) retroactively revise historical adjusted-close
+    values when new dividends are declared — so a wider re-ingest WILL see different
+    content for already-written dates. That is not corruption; the immutability
+    guarantee is doing its job. Callers should use has_clean() to only ingest dates
+    not yet in the store, rather than let this raise on routine vendor drift.
+    """
+    path = clean_path(date, name, root)
     fresh = frame.reset_index(drop=True)
     if path.exists():
         existing = pd.read_parquet(path)

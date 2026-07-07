@@ -36,6 +36,12 @@ def load_universe(path: Path = DEFAULT_ARTIFACT) -> list[UniverseEntry]:
     return entries
 
 
+def universe_version(path: Path = DEFAULT_ARTIFACT) -> str:
+    """e.g. 'universe-v1.csv' -> 'v1' — recorded on every backtest run for provenance."""
+    stem = path.stem
+    return stem.split("-")[-1] if "-" in stem else stem
+
+
 def symbols(entries: list[UniverseEntry], *classes: str) -> list[str]:
     wanted = classes or ASSET_CLASSES
     return [e.symbol for e in entries if e.asset_class in wanted]

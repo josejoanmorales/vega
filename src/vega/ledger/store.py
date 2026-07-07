@@ -1,4 +1,4 @@
-"""Append-only ledger store — JSONL, fsync on every write (Caral audit-log pattern).
+"""Append-only ledger store, built on vega.common.appendlog.
 
 There is deliberately NO update or delete API. Corrections append a new
 recommendation with `supersedes` set; `latest()` resolves the chains.
@@ -7,13 +7,12 @@ recommendation with `supersedes` set; `latest()` resolves the chains.
 from __future__ import annotations
 
 import dataclasses
-import json
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from vega.common.appendlog import AppendLog
 from vega.ledger.types import OVERRIDE_ACTIONS, Recommendation
 
 DEFAULT_PATH = Path("data/ledger/ledger.jsonl")
@@ -21,19 +20,12 @@ DEFAULT_PATH = Path("data/ledger/ledger.jsonl")
 
 class LedgerStore:
     def __init__(self, path: Path = DEFAULT_PATH) -> None:
-        self._path = path
-
-    def _append_line(self, record: dict[str, Any]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a") as fh:
-            fh.write(json.dumps(record, sort_keys=True) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
+        self._log = AppendLog(path)
 
     def append(self, rec: Recommendation) -> str:
         record = {"type": "recommendation", **dataclasses.asdict(rec)}
         record["signal_attribution"] = list(rec.signal_attribution)
-        self._append_line(record)
+        self._log.append(record)
         return rec.id
 
     def append_override(self, ref_id: str, action: str, detail: str, actor: str) -> str:
@@ -42,7 +34,7 @@ class LedgerStore:
         if ref_id not in {r["id"] for r in self.entries()}:
             raise ValueError(f"override references unknown recommendation {ref_id}")
         oid = str(uuid.uuid4())
-        self._append_line(
+        self._log.append(
             {
                 "type": "override",
                 "id": oid,
@@ -62,7 +54,7 @@ class LedgerStore:
         if ref_id not in {r["id"] for r in self.entries()}:
             raise ValueError(f"fill references unknown recommendation {ref_id}")
         fid = str(uuid.uuid4())
-        self._append_line(
+        self._log.append(
             {
                 "type": "fill",
                 "id": fid,
@@ -77,24 +69,13 @@ class LedgerStore:
         return fid
 
     def fills(self) -> list[dict[str, Any]]:
-        return self._records("fill")
-
-    def _records(self, kind: str) -> list[dict[str, Any]]:
-        if not self._path.exists():
-            return []
-        out: list[dict[str, Any]] = []
-        with self._path.open() as fh:
-            for line in fh:
-                record = json.loads(line)
-                if record["type"] == kind:
-                    out.append(record)
-        return out
+        return self._log.records_of_type("fill")
 
     def entries(self) -> list[dict[str, Any]]:
-        return self._records("recommendation")
+        return self._log.records_of_type("recommendation")
 
     def overrides(self) -> list[dict[str, Any]]:
-        return self._records("override")
+        return self._log.records_of_type("override")
 
     def latest(self) -> list[dict[str, Any]]:
         """Recommendations with supersede chains resolved to their newest version."""
