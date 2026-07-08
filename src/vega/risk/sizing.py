@@ -1,20 +1,24 @@
 """ATR-scaled, gap-stressed position sizing (STRATEGY.md §5.A).
 
-The min(base, gap) formula is what actually enforces "worst-case loss <= 2R"
-— algebraically, for any G > 0 and k > 0, whichever term binds keeps nominal
-risk <= 1R and gap-stressed risk <= 2R. The 1.5R clamp below is a defensive
-invariant on top of that (catches a future caller bypassing the formula with
-a manual qty override), not something today's defaults ever need to trigger.
+The min(base, gap) formula is what enforces the risk bounds — algebraically,
+for any G > 0 and k > 0, whichever term binds keeps nominal risk <= 1R and
+gap-stressed risk <= 2R. There is deliberately NO additional clamp: qty is
+computed only here, no caller supplies one, and a "defensive" clamp on an
+unreachable path is false safety (a review finding — the invariant is proven
+by tests on the formula itself instead).
+
+Price space: entry_price, stop_price, and ATR are all RAW prices — the space
+orders actually fill in (matching backtest/simulate.py's fill semantics).
+Signals may decide on adj_close, but risk lives where fills happen.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from vega.common.doctrine import GAP_STRESS_MULT, STOP_ATR_MULT
+
 DEFAULT_RISK_FRACTION = 0.0075  # 0.75% of equity per trade, mid of the 0.5-1% contract
-STOP_ATR_MULT = {"equity": 2.0, "etf": 2.0, "crypto": 2.5}
-GAP_STRESS_MULT = {"equity": 2.5, "etf": 2.5, "crypto": 2.0}
-SINGLE_POSITION_CAP_R = 1.5  # fraction of `risk_fraction * equity` a position may ever risk
 
 
 class SizingError(ValueError):
@@ -27,7 +31,7 @@ class SizingResult:
     qty: float
     initial_r_dollars: float  # actual nominal risk at the stop, in dollars
     worst_case_r_dollars: float  # gap-stressed worst case, in dollars
-    worst_case_r_multiple: float  # worst_case / (risk_fraction * equity) — should be <= ~2.0
+    worst_case_r_multiple: float  # worst_case / (risk_fraction * equity) — <= 2.0 by construction
 
 
 def compute_stop(entry_price: float, atr: float, asset_class: str) -> float:
@@ -66,12 +70,6 @@ def compute_qty(
 
     initial_r = qty * stop_distance
     worst_case_r = qty * gap * stop_distance
-
-    cap = SINGLE_POSITION_CAP_R * r_dollars
-    if initial_r > cap:
-        qty = cap / stop_distance
-        initial_r = qty * stop_distance
-        worst_case_r = qty * gap * stop_distance
 
     return SizingResult(
         stop_price=stop_price,

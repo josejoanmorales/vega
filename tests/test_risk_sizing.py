@@ -55,15 +55,38 @@ def test_qty_rejects_stop_at_or_above_entry() -> None:
         compute_qty(100.0, 105.0, 100_000.0, "equity")
 
 
-def test_single_position_cap_clamps_extreme_gap_multiples() -> None:
-    # a pathological gap multiple below 1 would otherwise let qty_base dominate
-    # and push nominal risk toward 2R; the 1.5R clamp must still hold.
-    stop = compute_stop(100.0, atr=1.0, asset_class="equity")
-    result = compute_qty(100.0, stop, equity=100_000.0, asset_class="equity", risk_fraction=0.0075)
+def test_nominal_risk_never_exceeds_one_r_for_any_configured_asset_class() -> None:
+    # the min(base, gap) formula itself is the invariant — there is deliberately
+    # no clamp (a prior review found a dead clamp giving false safety confidence)
     r_dollars = 0.0075 * 100_000.0
-    assert result.initial_r_dollars <= 1.5 * r_dollars + 1e-6
+    for asset_class in GAP_STRESS_MULT:
+        stop = compute_stop(100.0, atr=1.0, asset_class=asset_class)
+        result = compute_qty(100.0, stop, equity=100_000.0, asset_class=asset_class)
+        assert result.initial_r_dollars <= r_dollars + 1e-6
 
 
 def test_gap_stress_constants_within_the_contracted_two_to_three_range() -> None:
     assert 2.0 <= GAP_STRESS_MULT["equity"] <= 3.0
     assert 2.0 <= GAP_STRESS_MULT["crypto"] <= 3.0
+
+
+def test_doctrine_constants_are_the_shared_module_not_local_copies() -> None:
+    from vega.backtest import signals
+    from vega.common import doctrine
+    from vega.risk import sizing
+
+    assert sizing.STOP_ATR_MULT is doctrine.STOP_ATR_MULT
+    assert sizing.GAP_STRESS_MULT is doctrine.GAP_STRESS_MULT
+    # backtest EntryProposal defaults come from the same doctrine module
+    proposal_defaults = signals.EntryProposal(
+        symbol="X",
+        signal_family="f",
+        signal_version="1",
+        thesis="t",
+        confidence=0.5,
+        invalidation="i",
+    )
+    assert proposal_defaults.time_stop_days == doctrine.DEFAULT_TIME_STOP_SESSIONS
+    assert proposal_defaults.stop_atr_mult == doctrine.STOP_ATR_MULT["equity"]
+    assert proposal_defaults.profit_take_half_at_r == doctrine.PROFIT_TAKE_HALF_AT_R
+    assert proposal_defaults.profit_trail_atr_mult == doctrine.PROFIT_TRAIL_ATR_MULT

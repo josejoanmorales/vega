@@ -40,6 +40,31 @@ def test_correlation_none_with_insufficient_history() -> None:
     assert spy_correlation(frame, "BTC", as_of="2026-01-10") is None
 
 
+def test_spyless_frame_raises_instead_of_silently_not_contaminating() -> None:
+    n = 95
+    dates = pd.date_range("2026-01-01", periods=n, freq="D").strftime("%Y-%m-%d")
+    frame = pd.DataFrame({"symbol": ["BTC"] * n, "date": dates, "adj_close": range(100, 100 + n)})
+    with pytest.raises(ValueError, match="no SPY rows"):
+        spy_correlation(frame, "BTC", as_of=frame["date"].max())
+
+
+def test_calendar_mismatch_crypto_7day_vs_spy_5day_still_measures() -> None:
+    # crypto trades every day; SPY only weekdays. Merge-first windowing must
+    # still find `window` shared sessions instead of under-firing to None.
+    all_days = pd.date_range("2025-12-01", periods=200, freq="D")
+    rows = []
+    for i, d in enumerate(all_days):
+        # varied but deterministic path; SPY is exactly half of BTC on the
+        # weekdays it trades, so shared-session returns are identical
+        price = 100.0 + i * 0.5 + (i % 7) * 3.0
+        rows.append({"symbol": "BTC", "date": d.strftime("%Y-%m-%d"), "adj_close": price})
+        if d.weekday() < 5:
+            rows.append({"symbol": "SPY", "date": d.strftime("%Y-%m-%d"), "adj_close": price / 2})
+    frame = pd.DataFrame(rows)
+    corr = spy_correlation(frame, "BTC", as_of=all_days[-1].strftime("%Y-%m-%d"))
+    assert corr is not None and corr > 0.9  # both monotonic up on shared sessions
+
+
 def test_correlation_high_when_series_move_together() -> None:
     n = 95
     prices = [100.0 + i * 0.5 for i in range(n)]
@@ -62,3 +87,15 @@ def test_contamination_threshold_and_unmeasurable_default(
     corr: float | None, expected: bool
 ) -> None:
     assert contaminates_equity_beta(corr) is expected
+
+
+def test_cluster_frozensets_stay_reconciled_with_the_committed_universe() -> None:
+    """Guard until cluster membership migrates onto the universe artifact
+    (universe-v2, parked): every hardcoded cluster symbol must exist in the
+    current universe, so a refresh can't silently orphan the frozensets."""
+    from vega.data.universe import load_universe
+    from vega.risk.clusters import COMMODITIES, RATES
+
+    universe_symbols = {e.symbol for e in load_universe()}
+    assert RATES <= universe_symbols
+    assert COMMODITIES <= universe_symbols

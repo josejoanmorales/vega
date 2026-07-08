@@ -12,6 +12,12 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from vega.backtest.market_view import MarketView
+from vega.common.doctrine import (
+    DEFAULT_TIME_STOP_SESSIONS,
+    PROFIT_TAKE_HALF_AT_R,
+    PROFIT_TRAIL_ATR_MULT,
+    STOP_ATR_MULT,
+)
 
 
 @dataclass(frozen=True)
@@ -22,10 +28,12 @@ class EntryProposal:
     thesis: str
     confidence: float
     invalidation: str
-    time_stop_days: int = 15
-    stop_atr_mult: float = 2.0
-    profit_take_half_at_r: float = 2.0
-    profit_trail_atr_mult: float = 2.5
+    # exit-doctrine defaults come from the ONE shared module — never literals here,
+    # so the simulated exit mechanics cannot silently drift from the live risk engine's
+    time_stop_days: int = DEFAULT_TIME_STOP_SESSIONS  # trading sessions (simulate.py counts)
+    stop_atr_mult: float = STOP_ATR_MULT["equity"]
+    profit_take_half_at_r: float = PROFIT_TAKE_HALF_AT_R
+    profit_trail_atr_mult: float = PROFIT_TRAIL_ATR_MULT
 
 
 class Signal(Protocol):
@@ -54,7 +62,7 @@ class SmaCrossSignal:
 
     def scan(self, view: MarketView, universe: list[str]) -> list[EntryProposal]:
         proposals = []
-        stop_mult = 2.5 if self.asset_class == "crypto" else 2.0
+        stop_mult = STOP_ATR_MULT[self.asset_class]
         for symbol in universe:
             bars = view.bars(symbol, lookback=self.slow + 5)
             if len(bars) < self.slow + 1:

@@ -14,21 +14,23 @@ CLUSTERS = ("us_equity_beta", "rates", "commodities", "crypto_beta")
 class SizedProposal:
     symbol: str
     asset_class: str
-    entry_ref_price: float
+    entry_ref_price: float  # RAW price space (the space fills happen in)
     stop_price: float
     qty: float
-    initial_r_dollars: float  # qty * (entry - stop): the risk actually taken
-    worst_case_r_multiple: float  # gap-stressed worst case, in units of initial_r_dollars
-    time_stop_days: int
+    initial_r_dollars: float  # qty * (entry - stop): the risk actually taken, in dollars
+    worst_case_r_multiple: float  # gap-stressed worst case, in R multiples (<= 2.0)
+    time_stop_sessions: int  # TRADING sessions — canonical, matches backtest semantics
     exit_params: dict[str, Any]
     profit_rule_text: str
     invalidation: str
     cluster: str
-    heat_after: dict[str, float]  # cluster -> R after this proposal, incl. "total"
+    contaminates_equity_beta: bool  # crypto correlated >0.5 to SPY (always False otherwise)
+    heat_after_r: dict[str, float]  # cluster -> open risk in R MULTIPLES incl. "total"
+    # (directly comparable to heat.CAPS_R — dollar heat is an engine-internal detail)
 
 
 @dataclass(frozen=True)
 class Rejection:
     symbol: str
-    reason: str  # short code, e.g. "regime_risk_off", "heat_cap:crypto_beta"
+    reason: str  # short code, e.g. "regime_risk_off", "heat_cap:crypto_beta", "earnings_unknown"
     detail: str
