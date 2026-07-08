@@ -5,6 +5,12 @@ registry, never ad-hoc results). The promotion bar rises with the number of
 hypotheses already tried for a family — a crude but auditable stand-in for
 proper multiple-testing correction (deflated Sharpe etc.), to be refined only
 if real trial volume justifies the complexity.
+
+Rationale-first gate (WI-065): pass `rationale_registry` to `record_run` to
+enforce "a signal cannot enter testing without a written economic rationale
+recorded first" — testing IS calling record_run. The param is optional and
+defaults to no gate, so it stays backward-compatible with callers (WI-063's
+smoke test, existing tests) that don't supply one.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from vega.common.appendlog import AppendLog
+from vega.lifecycle.rationale import RationaleRegistry
 
 DEFAULT_PATH = Path("data/backtests/registry.jsonl")
 BASE_SHARPE_BAR = 0.8
@@ -99,7 +106,13 @@ class BacktestRegistry:
         holdout_evaluated: bool,
         promotion_bar: float | None,
         notes: list[str],
+        rationale_registry: RationaleRegistry | None = None,
     ) -> RunRecord:
+        if rationale_registry is not None and not rationale_registry.has_rationale(signal_family):
+            raise ValueError(
+                f"{signal_family} has no recorded economic rationale — cannot enter testing "
+                "(record one via RationaleRegistry.record before running a backtest)"
+            )
         prior_holdout_touches = self.holdout_touch_count(signal_family)
         record = RunRecord(
             run_id=str(uuid.uuid4()),

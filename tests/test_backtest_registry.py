@@ -1,7 +1,10 @@
 import math
 from pathlib import Path
 
+import pytest
+
 from vega.backtest.registry import BASE_SHARPE_BAR, LOG_SLOPE, BacktestRegistry
+from vega.lifecycle.rationale import RationaleRegistry
 
 
 def _record(reg: BacktestRegistry, family: str, grid_size: int, holdout: bool) -> None:
@@ -60,3 +63,54 @@ def test_promotion_bar_rises_with_cumulative_trials(tmp_path: Path) -> None:
 def test_promotion_bar_never_crashes_on_zero_or_negative_input(tmp_path: Path) -> None:
     reg = BacktestRegistry(tmp_path / "registry.jsonl")
     assert reg.promotion_bar(0) == reg.promotion_bar(1)  # floored at 1 trial
+
+
+def test_no_rationale_gate_by_default(tmp_path: Path) -> None:
+    # backward-compatible: existing callers (WI-063) don't pass a rationale_registry
+    reg = BacktestRegistry(tmp_path / "registry.jsonl")
+    _record(reg, "fam_a", grid_size=1, holdout=False)  # must not raise
+    assert len(reg.runs("fam_a")) == 1
+
+
+def test_rationale_gate_blocks_recording_without_a_rationale(tmp_path: Path) -> None:
+    reg = BacktestRegistry(tmp_path / "registry.jsonl")
+    rationale = RationaleRegistry(tmp_path / "rationale.jsonl")
+    with pytest.raises(ValueError, match="no recorded economic rationale"):
+        reg.record_run(
+            signal_family="fam_a",
+            signal_version="1",
+            param_grid_size=1,
+            universe_version="v1",
+            data_span=("2026-01-01", "2026-06-01"),
+            n_folds=1,
+            fold_metrics=[{"sharpe": 1.0}],
+            aggregate_metrics={"sharpe": 1.0},
+            verdict="fail",
+            holdout_evaluated=False,
+            promotion_bar=0.9,
+            notes=[],
+            rationale_registry=rationale,
+        )
+    assert reg.runs("fam_a") == []  # the gate blocked BEFORE any write
+
+
+def test_rationale_gate_allows_recording_once_rationale_exists(tmp_path: Path) -> None:
+    reg = BacktestRegistry(tmp_path / "registry.jsonl")
+    rationale = RationaleRegistry(tmp_path / "rationale.jsonl")
+    rationale.record("fam_a", "a real economic rationale", author="human:jose")
+    reg.record_run(
+        signal_family="fam_a",
+        signal_version="1",
+        param_grid_size=1,
+        universe_version="v1",
+        data_span=("2026-01-01", "2026-06-01"),
+        n_folds=1,
+        fold_metrics=[{"sharpe": 1.0}],
+        aggregate_metrics={"sharpe": 1.0},
+        verdict="pass",
+        holdout_evaluated=False,
+        promotion_bar=0.9,
+        notes=[],
+        rationale_registry=rationale,
+    )
+    assert len(reg.runs("fam_a")) == 1

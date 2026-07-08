@@ -20,6 +20,7 @@ from vega.backtest.signals import Signal
 from vega.backtest.simulate import simulate_signal
 from vega.data import snapshot
 from vega.data.universe import universe_version
+from vega.lifecycle.rationale import RationaleRegistry
 
 DEFAULT_STARTING_CAPITAL = 100_000.0
 MIN_TRADES_FOR_VERDICT = 30
@@ -66,6 +67,7 @@ def run_backtest(
     param_grid_size: int = 1,
     benchmark_symbol: str | None = None,
     registry: BacktestRegistry | None = None,
+    rationale_registry: RationaleRegistry | None = None,
 ) -> BacktestReport:
     source = SOURCE_BY_ASSET_CLASS[asset_class]
     bench_symbol = benchmark_symbol or DEFAULT_BENCHMARK[asset_class]
@@ -181,5 +183,6 @@ def run_backtest(
         holdout_evaluated=holdout_evaluated,
         promotion_bar=promotion_bar,
         notes=notes,
+        rationale_registry=rationale_registry,
     )
     return BacktestReport(record=record, trades_by_fold=tuple(trades_by_fold))

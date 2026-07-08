@@ -21,6 +21,7 @@ price, percentage, or statistic from memory.
 | `src/vega/briefing/` — deterministic pre-market briefing v1 | WI-062 | shipped (5-day gate running) |
 | `src/vega/backtest/` — walk-forward engine + backtest registry | WI-063 | shipped |
 | `src/vega/risk/` — sizing, portfolio heat, exit-spec writer | WI-064 | shipped |
+| `src/vega/lifecycle/` — signal promotion state machine | WI-065 | shipped |
 
 ## Data layer (WI-058)
 
@@ -152,6 +153,36 @@ specs consumed by the ledger, the backtester, and briefing v2.
   3R cap active), heat genuinely accumulating across candidates (AAPL 0.8R + BTC 1.0R
   = 1.8R total), BTC contamination measured (not silently skipped), both sleeves at
   exactly 2.00R worst case, round-tripping into valid ledger entries.
+
+## Signal lifecycle (WI-065)
+
+`candidate → backtested → paper-live → trusted → retired`. Only `paper-live`/`trusted`
+signals are eligible for recommendations (`is_eligible_state`) — the filter WI-067's
+briefing v2 will apply. Retirement is reachable from any state; retired is terminal (a
+reconsidered signal registers as a new family/version, preserving the audit trail).
+
+- `rationale.py`: `RationaleRegistry` — append-only economic rationales. The rationale-first
+  gate lives in `backtest.registry.BacktestRegistry.record_run` (optional
+  `rationale_registry` param, backward-compatible default `None`): testing IS calling
+  `record_run`, so this is where "a signal cannot enter testing without a written rationale"
+  becomes enforceable, not a parallel check.
+- `lifecycle.py`: `LifecycleRegistry` — an explicit transition table (no skipping forward,
+  no un-retiring). `promote_to_backtested` requires a rationale AND a `pass`-verdict run on
+  file, and snapshots which run justified it (`justifying_run_id`, highest-Sharpe passing
+  run). `promote_to_paper_live`/`promote_to_trusted` are always deliberate human acts —
+  never automatic (an agent may propose, only a human promotes).
+- `demotion.py`: auto-demotion when live performance falls below the signal's **backtest
+  confidence band = [worst, best] dev-fold Sharpe from the justifying run** — already
+  recorded in the registry, no new tunable constant invented. Evaluated only once ≥30 live
+  resolved trades exist (reuses `MIN_TRADES_FOR_VERDICT` — below that, live Sharpe is
+  noise). Reuses `backtest.metrics.compute_fold_metrics` via a `LiveTrade → TradeRecord`
+  adapter so live and backtested Sharpe are computed by the *same formula* — comparing them
+  any other way is a units bug of exactly the kind the WI-063/WI-064 reviews found
+  repeatedly. Demotion always lands on `backtested`, never `candidate`.
+  **Scope note:** the live ledger doesn't record exit fills yet (WI-061 only tracks entries;
+  exit monitoring is WI-067's job), so there is no real data source for live trades today —
+  this module is fully wired and tested against synthetic data so it activates the moment
+  WI-067 lands.
 
 ## Verification gate
 
