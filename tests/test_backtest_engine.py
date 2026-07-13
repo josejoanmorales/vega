@@ -7,6 +7,9 @@ from vega.backtest.engine import run_backtest
 from vega.backtest.market_view import MarketView
 from vega.backtest.registry import BacktestRegistry
 from vega.backtest.signals import EntryProposal
+from vega.lifecycle.rationale import NullRationaleRegistry
+
+_NULL_RATIONALE = NullRationaleRegistry()
 
 
 def _make_store(tmp_path: Path, frame: pd.DataFrame) -> Path:
@@ -77,6 +80,7 @@ def test_insufficient_sample_when_too_few_trades(tmp_path: Path) -> None:
         root=root,
         test_size_sessions=63,
         registry=BacktestRegistry(tmp_path / "reg.jsonl"),
+        rationale_registry=_NULL_RATIONALE,
     )
     assert report.record.verdict == "insufficient_sample"
     assert report.record.holdout_evaluated is False
@@ -92,6 +96,7 @@ def test_non_promotable_signal_never_gets_a_pass_verdict(tmp_path: Path) -> None
         root=root,
         test_size_sessions=30,
         registry=BacktestRegistry(tmp_path / "reg.jsonl"),
+        rationale_registry=_NULL_RATIONALE,
     )
     assert report.record.verdict == "non_promotable_placeholder"
     assert report.record.holdout_evaluated is False
@@ -108,6 +113,7 @@ def test_holdout_is_never_touched_unless_dev_verdict_is_pass(tmp_path: Path) -> 
         root=root,
         test_size_sessions=63,
         registry=reg,
+        rationale_registry=_NULL_RATIONALE,
     )
     assert reg.holdout_touch_count("always_win_test") == 0
     assert not any("is_holdout" in fold for fold in report.record.fold_metrics)
@@ -124,6 +130,7 @@ def test_every_run_is_recorded_regardless_of_verdict(tmp_path: Path) -> None:
         root=root,
         test_size_sessions=63,
         registry=reg,
+        rationale_registry=_NULL_RATIONALE,
     )
     assert len(reg.runs()) == 1
     # tmp root has no universe artifact — provenance must say so, never guess a version
@@ -143,6 +150,7 @@ def test_a_clear_winning_signal_with_enough_trades_passes_and_touches_holdout_on
         root=root,
         test_size_sessions=63,
         registry=reg,
+        rationale_registry=_NULL_RATIONALE,
     )
     assert report.record.n_folds == 2
     assert report.record.aggregate_metrics["n_trades"] >= 30
@@ -159,6 +167,7 @@ def test_a_clear_winning_signal_with_enough_trades_passes_and_touches_holdout_on
         root=root,
         test_size_sessions=63,
         registry=reg,
+        rationale_registry=_NULL_RATIONALE,
     )
     assert second.record.promotion_bar is not None and report.record.promotion_bar is not None
     assert second.record.promotion_bar > report.record.promotion_bar

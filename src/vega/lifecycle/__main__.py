@@ -2,9 +2,10 @@
 
 Run: uv run python -m vega.lifecycle
 
-Uses the non-promotable SmaCrossSignal fixture (same as WI-063's smoke test)
-to exercise the rationale gate and the state machine without ever actually
-reaching paper-live — a fixture signal should never get that far.
+Uses a 3-symbol universe (not the full 545) — this smoke test proves the
+gate + state machine end to end, not backtest correctness at scale, so it
+runs in seconds. The gate-blocked demonstration comes FIRST and cheaply,
+since the rationale gate now fires before any walk-forward compute.
 """
 
 from __future__ import annotations
@@ -26,20 +27,18 @@ def main() -> None:
     registry = BacktestRegistry(SMOKE_ROOT / "registry.jsonl")
     lifecycle = LifecycleRegistry(SMOKE_ROOT / "transitions.jsonl")
     family = SmaCrossSignal.family
+    universe = symbols(load_universe(), "equity", "etf")[:3]  # tiny — this tests governance
 
     print(f"before rationale: has_rationale={rationale.has_rationale(family)}")
-    universe = symbols(load_universe(), "equity", "etf")
-
     try:
         run_backtest(
             signal=SmaCrossSignal(asset_class="equity"),
             universe=universe,
             asset_class="equity",
-            registry=registry,
             rationale_registry=rationale,
         )
     except ValueError as exc:
-        print(f"backtest blocked as expected (no rationale yet): {exc}")
+        print(f"backtest blocked BEFORE any compute (no rationale yet): {exc}")
 
     rationale.record(
         family,
@@ -50,15 +49,14 @@ def main() -> None:
         signal=SmaCrossSignal(asset_class="equity"),
         universe=universe,
         asset_class="equity",
-        registry=registry,
         rationale_registry=rationale,
     )
     print(f"backtest recorded: verdict={report.record.verdict}")
 
     try:
-        lifecycle.promote_to_backtested(family, rationale, registry, actor="smoke_test")
+        lifecycle.promote_to_backtested(family, rationale, registry, actor="agent:sonnet")
     except LifecycleError as exc:
-        print(f"promotion correctly blocked (non-promotable verdict, no 'pass'): {exc}")
+        print(f"promotion correctly blocked (non-promotable, no 'pass' run): {exc}")
 
     print(f"final state: {lifecycle.current_state(family)}")
 

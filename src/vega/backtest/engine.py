@@ -20,7 +20,7 @@ from vega.backtest.signals import Signal
 from vega.backtest.simulate import simulate_signal
 from vega.data import snapshot
 from vega.data.universe import universe_version
-from vega.lifecycle.rationale import RationaleRegistry
+from vega.lifecycle.rationale import RationaleSource
 
 DEFAULT_STARTING_CAPITAL = 100_000.0
 MIN_TRADES_FOR_VERDICT = 30
@@ -59,6 +59,7 @@ def run_backtest(
     signal: Signal,
     universe: list[str],
     asset_class: str,
+    rationale_registry: RationaleSource,
     root: Path = snapshot.DATA_ROOT,
     holdout_frac: float = 0.2,
     test_size_sessions: int = 63,
@@ -67,8 +68,19 @@ def run_backtest(
     param_grid_size: int = 1,
     benchmark_symbol: str | None = None,
     registry: BacktestRegistry | None = None,
-    rationale_registry: RationaleRegistry | None = None,
 ) -> BacktestReport:
+    # Rationale-first gate, FIRST — before any data loading, simulation, or (above
+    # all) the holdout. A review found the previous placement (inside record_run,
+    # the last step) let an ungated run compute everything, see the results, and
+    # invisibly burn the holdout without the touch counter ever recording it —
+    # the anti-HARKing bookkeeping itself was bypassable. The gate is mandatory;
+    # tests opt out VISIBLY via NullRationaleRegistry, never by omission.
+    if not rationale_registry.has_rationale(signal.family):
+        raise ValueError(
+            f"{signal.family} has no recorded economic rationale — cannot enter testing "
+            "(record one via RationaleRegistry.record before running a backtest)"
+        )
+
     source = SOURCE_BY_ASSET_CLASS[asset_class]
     bench_symbol = benchmark_symbol or DEFAULT_BENCHMARK[asset_class]
     frame = _load_bars([*universe, bench_symbol], source, root)

@@ -8,8 +8,11 @@ appends a new record referencing the old one (e.g. `supersedes`).
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -43,3 +46,22 @@ class AppendLog:
         # r["type"], not r.get("type"): a record missing its type is corruption and
         # must raise, not silently vanish from an audit log that then looks clean.
         return [r for r in self.records() if r["type"] == kind]
+
+    @contextmanager
+    def exclusive_lock(self) -> Iterator[None]:
+        """Cross-process exclusive lock for read-validate-append sequences.
+
+        A bare append is atomic enough on its own; this exists for callers whose
+        VALIDATION depends on the current log contents (e.g. a state machine's
+        legal-transition check) — without it, two writers can both validate
+        against the same stale state and append conflicting records (review
+        finding: a race could effectively un-retire a terminal lifecycle state).
+        """
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self._path.with_suffix(self._path.suffix + ".lock")
+        with lock_path.open("w") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)

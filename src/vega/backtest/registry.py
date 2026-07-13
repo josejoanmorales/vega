@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from vega.common.appendlog import AppendLog
-from vega.lifecycle.rationale import RationaleRegistry
+from vega.lifecycle.rationale import RationaleSource
 
 DEFAULT_PATH = Path("data/backtests/registry.jsonl")
 BASE_SHARPE_BAR = 0.8
@@ -106,7 +106,7 @@ class BacktestRegistry:
         holdout_evaluated: bool,
         promotion_bar: float | None,
         notes: list[str],
-        rationale_registry: RationaleRegistry | None = None,
+        rationale_registry: RationaleSource | None = None,  # defense-in-depth; engine gates first
     ) -> RunRecord:
         if rationale_registry is not None and not rationale_registry.has_rationale(signal_family):
             raise ValueError(

@@ -12,6 +12,7 @@ import json
 from vega.backtest.engine import run_backtest
 from vega.backtest.signals import SmaCrossSignal
 from vega.data.universe import load_universe, symbols
+from vega.lifecycle.rationale import NullRationaleRegistry
 
 
 def main() -> None:
@@ -20,6 +21,9 @@ def main() -> None:
         signal=SmaCrossSignal(asset_class="equity"),
         universe=universe,
         asset_class="equity",
+        # explicitly opting out of the rationale gate — this smoke test exercises
+        # the walk-forward mechanics, not governance (the gate has its own tests)
+        rationale_registry=NullRationaleRegistry(),
     )
     r = report.record
     print(f"verdict: {r.verdict} (family={r.signal_family}, folds={r.n_folds})")

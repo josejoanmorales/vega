@@ -4,19 +4,18 @@ band (STRATEGY.md §6, Pillar 2).
 Band = [worst, best] dev-fold Sharpe from the run that justified the family's
 promotion — already recorded in the registry, so no new tunable constant is
 invented. Evaluated only once >=30 live resolved trades exist (statistical
-honesty, same MIN_TRADES_FOR_VERDICT threshold WI-063 uses for backtests —
-below that, live Sharpe is noise, not evidence).
+honesty — below that, live Sharpe is noise, not evidence).
 
-Reuses backtest.metrics.compute_fold_metrics for the live Sharpe calculation
-(via a thin adapter to TradeRecord) so live and backtested Sharpe are computed
-by the exact same formula — comparing them any other way risks a units bug of
-the kind the WI-063/WI-064 reviews found repeatedly.
+Live Sharpe comes from vega.backtest.live_metrics.live_sharpe — the ONE
+backtest-owned service guaranteeing the same formula AND the same session-grid
+sampling as the band it's compared against (both were review findings: the
+previous version reached into backtest internals directly and sampled only
+trade-event days, which inflated live Sharpe and made demotion under-fire).
 
-SCOPE NOTE: the live ledger does not yet record exit fills (WI-061 only
-tracks entries; exit monitoring is WI-067's job) — there is no real data
-source for `live_trades` today. This module is fully wired and tested against
-synthetic trade data so it activates the moment WI-067 lands; until then any
-real caller naturally sees zero live trades and reports insufficient_sample.
+SCOPE NOTE: the live ledger does not yet record exit fills (WI-061 tracks
+entries; exit monitoring is WI-067's job) — no real data source for
+`live_trades` exists today. Fully wired and tested against synthetic data so
+it activates the moment WI-067 lands.
 """
 
 from __future__ import annotations
@@ -24,23 +23,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vega.backtest.engine import MIN_TRADES_FOR_VERDICT
-from vega.backtest.metrics import compute_fold_metrics
-from vega.backtest.simulate import TradeRecord
+from vega.backtest.live_metrics import (
+    DEFAULT_STARTING_CAPITAL,
+    MIN_TRADES_FOR_VERDICT,
+    LiveTrade,
+    live_sharpe,
+)
 
-DEFAULT_STARTING_CAPITAL = 100_000.0  # stated default until a real capital source exists
-
-
-@dataclass(frozen=True)
-class LiveTrade:
-    symbol: str
-    asset_class: str
-    entry_date: str
-    entry_price: float
-    exit_date: str
-    exit_price: float
-    qty: float
-    stop_price: float
+__all__ = ["LiveTrade", "DemotionVerdict", "confidence_band", "check_auto_demotion"]
 
 
 @dataclass(frozen=True)
@@ -65,38 +55,19 @@ def confidence_band(justifying_run: dict[str, Any]) -> tuple[float, float] | Non
     return (min(sharpes), max(sharpes))
 
 
-def _to_trade_record(t: LiveTrade) -> TradeRecord:
-    initial_r = abs(t.entry_price - t.stop_price) or 1e-9
-    return TradeRecord(
-        symbol=t.symbol,
-        asset_class=t.asset_class,
-        signal_family="live",
-        signal_version="live",
-        entry_date=t.entry_date,
-        entry_price=t.entry_price,
-        initial_qty=t.qty,
-        stop_price=t.stop_price,
-        initial_r=initial_r,
-        thesis="",
-        confidence=0.0,
-        invalidation="",
-        exits=({"date": t.exit_date, "qty": t.qty, "price": t.exit_price, "reason": "live_exit"},),
-        realized_pnl=round((t.exit_price - t.entry_price) * t.qty, 6),
-        r_multiple=round((t.exit_price - t.entry_price) / initial_r, 4),
-        unresolved_at_end=False,
-    )
-
-
 def check_auto_demotion(
     live_trades: list[LiveTrade],
     justifying_run: dict[str, Any],
+    session_dates: list[str],
     min_trades: int = MIN_TRADES_FOR_VERDICT,
     starting_capital: float = DEFAULT_STARTING_CAPITAL,
 ) -> DemotionVerdict:
+    """`session_dates` = the FULL trading calendar covering the live window
+    (from the clean store) — never just the trade-event days."""
     if len(live_trades) < min_trades:
         return DemotionVerdict(
             False,
-            f"insufficient_sample: {len(live_trades)} < {min_trades}",
+            f"insufficient_sample: need >= {min_trades}",
             None,
             None,
             len(live_trades),
@@ -110,11 +81,8 @@ def check_auto_demotion(
             None,
             len(live_trades),
         )
-    dates = sorted({t.entry_date for t in live_trades} | {t.exit_date for t in live_trades})
-    trade_records = [_to_trade_record(t) for t in live_trades]
-    asset_class = live_trades[0].asset_class
-    fm = compute_fold_metrics(trade_records, dates, starting_capital, asset_class)
-    if fm.sharpe is None:
+    observed = live_sharpe(live_trades, session_dates, starting_capital)
+    if observed is None:
         return DemotionVerdict(
             False,
             "live Sharpe undefined (flat or single-session P&L)",
@@ -122,12 +90,12 @@ def check_auto_demotion(
             band,
             len(live_trades),
         )
-    if fm.sharpe < band[0]:
+    if observed < band[0]:
         return DemotionVerdict(
             True,
-            f"live Sharpe {fm.sharpe} below band floor {band[0]}",
-            fm.sharpe,
+            f"live Sharpe {observed} below band floor {band[0]}",
+            observed,
             band,
             len(live_trades),
         )
-    return DemotionVerdict(False, "within band", fm.sharpe, band, len(live_trades))
+    return DemotionVerdict(False, "within band", observed, band, len(live_trades))

@@ -161,28 +161,38 @@ signals are eligible for recommendations (`is_eligible_state`) — the filter WI
 briefing v2 will apply. Retirement is reachable from any state; retired is terminal (a
 reconsidered signal registers as a new family/version, preserving the audit trail).
 
-- `rationale.py`: `RationaleRegistry` — append-only economic rationales. The rationale-first
-  gate lives in `backtest.registry.BacktestRegistry.record_run` (optional
-  `rationale_registry` param, backward-compatible default `None`): testing IS calling
-  `record_run`, so this is where "a signal cannot enter testing without a written rationale"
-  becomes enforceable, not a parallel check.
-- `lifecycle.py`: `LifecycleRegistry` — an explicit transition table (no skipping forward,
-  no un-retiring). `promote_to_backtested` requires a rationale AND a `pass`-verdict run on
-  file, and snapshots which run justified it (`justifying_run_id`, highest-Sharpe passing
-  run). `promote_to_paper_live`/`promote_to_trusted` are always deliberate human acts —
-  never automatic (an agent may propose, only a human promotes).
-- `demotion.py`: auto-demotion when live performance falls below the signal's **backtest
-  confidence band = [worst, best] dev-fold Sharpe from the justifying run** — already
-  recorded in the registry, no new tunable constant invented. Evaluated only once ≥30 live
-  resolved trades exist (reuses `MIN_TRADES_FOR_VERDICT` — below that, live Sharpe is
-  noise). Reuses `backtest.metrics.compute_fold_metrics` via a `LiveTrade → TradeRecord`
-  adapter so live and backtested Sharpe are computed by the *same formula* — comparing them
-  any other way is a units bug of exactly the kind the WI-063/WI-064 reviews found
-  repeatedly. Demotion always lands on `backtested`, never `candidate`.
-  **Scope note:** the live ledger doesn't record exit fills yet (WI-061 only tracks entries;
-  exit monitoring is WI-067's job), so there is no real data source for live trades today —
-  this module is fully wired and tested against synthetic data so it activates the moment
-  WI-067 lands.
+- `rationale.py`: `RationaleRegistry` (append-only economic rationales) + a `RationaleSource`
+  protocol and `NullRationaleRegistry` for **explicit** opt-out. The rationale-first gate
+  fires at the **top of `run_backtest`, before any data load, simulation, or holdout** — a
+  review found placing it inside `record_run` (the last step) let an ungated run compute
+  everything, see the results, and silently burn the holdout without the touch counter
+  recording it, so the anti-HARKing audit was itself bypassable. The gate is **mandatory**
+  (the param is required); tests opt out visibly via `NullRationaleRegistry`, never by
+  omission. `record_run` keeps a defense-in-depth check.
+- `lifecycle.py`: `LifecycleRegistry` — an explicit transition table. `backtested → backtested`
+  is a legal **re-justification** self-transition: after a demotion, a fresh backtest run
+  attaches a new `justifying_run_id` so the demotion band reflects post-demotion evidence
+  instead of the stale band the signal already breached. Trust-granting transitions
+  (`paper-live`, `trusted`, `retire`) **require a `human:`-prefixed actor** (an unattended
+  agent cannot promote to live — a prefix contract, the same solo-scale posture as Caral's
+  role tokens). Justifying-run selection uses `is None`, not `or`, so a legitimate 0.0-Sharpe
+  run isn't scored as −∞. Every read-validate-append holds a cross-process lock
+  (`AppendLog.exclusive_lock`) so two writers can't both validate against stale state (e.g.
+  racing a retire against a promote). **Version policy is stated, not implicit:** lifecycle
+  state is a family-level decision; the justifying run's version is recorded for audit; a
+  materially different algorithm registers as a new family.
+- `demotion.py`: auto-demotion when live performance falls below the **backtest confidence
+  band = [worst, best] dev-fold Sharpe of the justifying run**. Live Sharpe comes from
+  `backtest.live_metrics.live_sharpe` — a backtest-**owned** service (governance no longer
+  reaches into engine internals; a review flagged the inverted dependency) that enforces two
+  comparability rules the review found broken: it computes over the **full trading-session
+  grid** (flat days included, exactly as backtest folds do — sampling only trade-event days
+  inflated live Sharpe and made demotion under-fire), and it **raises on a mixed-asset-class
+  batch** rather than annualizing a blended series by whichever trade sorted first. Evaluated
+  only once ≥30 live trades exist. Demotion always lands on `backtested`.
+  **Scope note:** the live ledger doesn't record exit fills yet (WI-067's job), so there is no
+  real live-trade source today — fully wired and tested against synthetic data so it
+  activates the moment WI-067 lands.
 
 ## Verification gate
 
