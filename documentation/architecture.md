@@ -22,6 +22,7 @@ price, percentage, or statistic from memory.
 | `src/vega/backtest/` — walk-forward engine + backtest registry | WI-063 | shipped |
 | `src/vega/risk/` — sizing, portfolio heat, exit-spec writer | WI-064 | shipped |
 | `src/vega/lifecycle/` — signal promotion state machine | WI-065 | shipped |
+| `src/vega/signals/` — first 3 candidate signal families | WI-066 | shipped (2/3 backtested) |
 
 ## Data layer (WI-058)
 
@@ -193,6 +194,35 @@ reconsidered signal registers as a new family/version, preserving the audit trai
   **Scope note:** the live ledger doesn't record exit fills yet (WI-067's job), so there is no
   real live-trade source today — fully wired and tested against synthetic data so it
   activates the moment WI-067 lands.
+
+## First signal families (WI-066)
+
+Three families, rationales recorded in the `RationaleRegistry` before their first backtest
+(the WI-065-enforced ordering — registry timestamps prove it), price/volume-only,
+equities/ETFs, 545-symbol universe, 6-point total grid:
+
+- `trend_pullback.py` — buy the first up-close after a 3–5% pullback inside a rising-SMA50
+  uptrend. **Dev-fold pass (Sharpe 2.4+ both grid points) but holdout Sharpe went
+  NEGATIVE (-0.08, -0.94) on both** — a textbook dev/holdout divergence. **Deliberately NOT
+  promoted** despite the passing dev verdict; the registry records both runs honestly, the
+  contradiction is surfaced here rather than hidden, and the family stays at `candidate`
+  pending a human decision on whether to investigate or retire it.
+- `breakout_volume.py` — new N-session closing high (N=40, 55) on ≥1.5× median 60-session
+  *consolidated* volume (never IEX — this family only ever runs against yfinance-sourced
+  bars). **Failed both grid points** (Sharpe ≈0.0 and 0.02, comfortably below the ~0.83–0.86
+  promotion bar) — an honest negative result matching one of the rationale's own stated
+  falsification conditions. Stays at `candidate`; the volume-confirmation edge did not
+  materialize in this universe/window.
+- `oversold_reversion.py` — 3-session drop ≥2.0–2.5×ATR14 while still above SMA100, 7-session
+  time stop (doctrine override), half off at +1.5R. **Passed both grid points with holdout
+  Sharpe (3.5–3.7) *exceeding* dev Sharpe (1.3)** — consistent, non-degrading out-of-sample
+  performance. **Promoted to `backtested`** (agent-legal per WI-065's contract: rationale +
+  a passing run). `paper-live` remains Jose's deliberate human act — the state machine's
+  `human:`-prefix gate would reject anything else.
+
+`helpers.py` centralizes the price/volume math (SMA, N-session-high, median volume,
+3-session change) as pure functions over an already-PIT-truncated bars frame; ATR reuses
+the one shared `vega.common.atr` implementation via a thin adapter, never reimplemented.
 
 ## Verification gate
 
