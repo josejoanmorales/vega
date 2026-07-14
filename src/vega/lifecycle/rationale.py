@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Protocol
 
 from vega.common.appendlog import AppendLog
+from vega.common.paths import DATA_ROOT
 
-DEFAULT_PATH = Path("data/lifecycle/rationale.jsonl")
+DEFAULT_PATH = DATA_ROOT / "lifecycle/rationale.jsonl"
 
 
 class RationaleSource(Protocol):

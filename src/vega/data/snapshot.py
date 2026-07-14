@@ -17,9 +17,8 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
+from vega.common.paths import DATA_ROOT as DATA_ROOT  # project-anchored, never CWD-relative
 from vega.data.types import SnapshotConflictError
-
-DATA_ROOT = Path("data")
 
 
 def _stamp() -> tuple[str, str]:

@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from vega.common.appendlog import AppendLog
+from vega.common.paths import DATA_ROOT
 from vega.ledger.types import OVERRIDE_ACTIONS, Recommendation
 
-DEFAULT_PATH = Path("data/ledger/ledger.jsonl")
+DEFAULT_PATH = DATA_ROOT / "ledger/ledger.jsonl"
 
 
 class LedgerStore:

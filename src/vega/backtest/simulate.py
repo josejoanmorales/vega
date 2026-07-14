@@ -29,6 +29,7 @@ from vega.backtest.signals import EntryProposal, Signal
 from vega.common.atr import compute_atr
 
 MEDIAN_VOLUME_WINDOW = 60
+ENTRY_RETRY_SESSIONS = 3  # a queued entry survives up to 3 sessions without a bar
 
 
 @dataclass
@@ -106,7 +107,11 @@ def simulate_signal(
 
     open_positions: dict[str, _OpenPosition] = {}
     pending_exits: dict[str, _OpenPosition] = {}
-    pending_entries: dict[str, EntryProposal] = {}
+    # (proposal, retries_left): an entry queued at close of T fills at the next
+    # session the symbol HAS a bar, up to ENTRY_RETRY_SESSIONS — the WI-066 review
+    # found the old dict was rebuilt daily, silently dropping every proposal whose
+    # symbol gapped a bar the next day (an unlogged trade-loss channel).
+    pending_entries: dict[str, tuple[EntryProposal, int]] = {}
     completed: list[TradeRecord] = []
 
     def _bps(symbol: str, as_of: str) -> float:
@@ -161,8 +166,9 @@ def simulate_signal(
             _finalize(pos, unresolved=False)
             del pending_exits[symbol]
 
-        # 1. fill queued entries at today's open (retry next day if no bar)
-        for symbol, proposal in list(pending_entries.items()):
+        # 1. fill queued entries at today's open; a symbol with no bar today keeps
+        # its place in the queue (retries decremented in step 4's rebuild)
+        for symbol, (proposal, _retries) in list(pending_entries.items()):
             row = today.get(symbol)
             if row is None or prior_date is None:
                 continue
@@ -255,15 +261,23 @@ def simulate_signal(
                 pending_exits[symbol] = pos
                 del open_positions[symbol]
 
-        # 4. new entries decided at close of `date`, queued for the next session's open
+        # 4. new entries decided at close of `date`, queued for the next session's
+        # open — MERGED with still-unfilled prior proposals (retry with decrement;
+        # a fresh proposal for the same symbol supersedes the stale one)
         if i < len(dates) - 1:
             view = MarketView(frame, as_of=date)
             proposals = signal.scan(view, universe)
-            pending_entries = {
-                p.symbol: p
+            carried = {
+                sym: (prop, retries - 1)
+                for sym, (prop, retries) in pending_entries.items()
+                if retries > 1 and sym not in open_positions and sym not in pending_exits
+            }
+            fresh = {
+                p.symbol: (p, ENTRY_RETRY_SESSIONS)
                 for p in proposals
                 if p.symbol not in open_positions and p.symbol not in pending_exits
             }
+            pending_entries = {**carried, **fresh}
         else:
             pending_entries = {}
 

@@ -28,19 +28,20 @@ VOLUME_MULTIPLE = 1.5
 
 class BreakoutVolumeSignal:
     family = "breakout_volume_v1"
-    version = "1"
+    version = "1.1"  # 1.1: strict Donchian semantics — today > max of N PRIOR sessions (review fix)
     promotable = True
 
     def __init__(self, n_sessions: int) -> None:
         """n_sessions: breakout lookback window (grid: 40, 55)."""
         self.n_sessions = n_sessions
-        self.lookback = max(n_sessions, MEDIAN_VOLUME_WINDOW) + 5
+        self.params = {"n_sessions": n_sessions}  # recorded on every RunRecord
+        self.lookback = max(n_sessions + 1, MEDIAN_VOLUME_WINDOW) + 5
 
     def scan(self, view: MarketView, universe: list[str]) -> list[EntryProposal]:
         proposals = []
         for symbol in universe:
             bars = view.bars(symbol, lookback=self.lookback)
-            if len(bars) < max(self.n_sessions, MEDIAN_VOLUME_WINDOW):
+            if len(bars) < max(self.n_sessions + 1, MEDIAN_VOLUME_WINDOW):
                 continue
             closes = bars["adj_close"]
             volumes = bars["volume"]

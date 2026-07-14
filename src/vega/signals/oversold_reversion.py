@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from vega.backtest.market_view import MarketView
 from vega.backtest.signals import EntryProposal
-from vega.signals.helpers import atr14, sma, three_session_change
+from vega.signals.helpers import adjusted_atr14, sma, three_session_change
 
 LOOKBACK = 115
 SMA_WINDOW = 100
@@ -35,12 +35,13 @@ PROFIT_TAKE_HALF_AT_R = 1.5
 
 class OversoldReversionSignal:
     family = "oversold_reversion_v1"
-    version = "1"
+    version = "1.1"  # 1.1: shock threshold now fully in adjusted price space (review fix)
     promotable = True
 
     def __init__(self, k: float) -> None:
         """k: ATR14 multiple defining the shock threshold (grid: 2.0, 2.5)."""
         self.k = k
+        self.params = {"k": k}  # recorded on every RunRecord (review: param identity)
 
     def scan(self, view: MarketView, universe: list[str]) -> list[EntryProposal]:
         proposals = []
@@ -58,7 +59,7 @@ class OversoldReversionSignal:
                 continue  # not in an intact uptrend
 
             change3 = three_session_change(closes)
-            atr = atr14(bars, symbol, view.as_of)
+            atr = adjusted_atr14(bars, symbol, view.as_of)  # SAME space as change3
             if change3 is None or atr is None or atr <= 0:
                 continue
             if change3 > -self.k * atr:

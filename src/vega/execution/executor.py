@@ -14,10 +14,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from vega.common.paths import DATA_ROOT
 from vega.ledger.store import LedgerStore
 
 DEFAULT_NOTIONAL_USD = 1_000.0
-FAILURES_PATH = Path("data/ledger/exec_failures.jsonl")
+FAILURES_PATH = DATA_ROOT / "ledger/exec_failures.jsonl"
 FILL_POLL_ATTEMPTS = 5
 FILL_POLL_DELAY_S = 2.0
 

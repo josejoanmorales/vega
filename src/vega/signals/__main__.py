@@ -16,7 +16,10 @@ from vega.signals.breakout_volume import BreakoutVolumeSignal
 from vega.signals.oversold_reversion import OversoldReversionSignal
 from vega.signals.trend_pullback import TrendPullbackSignal
 
-GRID_SIZE_PER_FAMILY = 2  # total planned grid per family (for honest cumulative-trial accounting)
+# One run = ONE grid point = param_grid_size 1 (review fix: passing the family's
+# planned total on every run double-counted trials — the bar for run 2 was computed
+# as if 4 hypotheses had been tried when only 2 params exist).
+PARAM_GRID_SIZE_PER_RUN = 1
 
 
 def main() -> None:
@@ -41,7 +44,7 @@ def main() -> None:
             asset_class="equity",
             rationale_registry=rationale,
             registry=registry,
-            param_grid_size=GRID_SIZE_PER_FAMILY,
+            param_grid_size=PARAM_GRID_SIZE_PER_RUN,
         )
         r = report.record
         n_trades = r.aggregate_metrics.get("n_trades")

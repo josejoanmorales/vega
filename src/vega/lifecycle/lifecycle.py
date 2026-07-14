@@ -39,9 +39,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from vega.common.appendlog import AppendLog
+from vega.common.paths import DATA_ROOT
 from vega.lifecycle.rationale import RationaleRegistry
 
-DEFAULT_PATH = Path("data/lifecycle/transitions.jsonl")
+DEFAULT_PATH = DATA_ROOT / "lifecycle/transitions.jsonl"
 
 STATES = ("candidate", "backtested", "paper-live", "trusted", "retired")
 ELIGIBLE_STATES = ("paper-live", "trusted")
@@ -91,6 +92,7 @@ class TransitionRecord:
     automatic: bool
     justifying_run_id: str | None = None
     justifying_version: str | None = None  # which version's evidence backed this (audit)
+    justifying_params: dict[str, Any] | None = None  # WHICH parameterization was validated
 
 
 class LifecycleRegistry:
@@ -116,6 +118,7 @@ class LifecycleRegistry:
         automatic: bool = False,
         justifying_run_id: str | None = None,
         justifying_version: str | None = None,
+        justifying_params: dict[str, Any] | None = None,
     ) -> TransitionRecord:
         # lock around read-validate-append: two writers must never both validate
         # against the same stale state (could e.g. un-retire a terminal state)
@@ -134,14 +137,42 @@ class LifecycleRegistry:
                 automatic=automatic,
                 justifying_run_id=justifying_run_id,
                 justifying_version=justifying_version,
+                justifying_params=justifying_params,
             )
             self._log.append({"type": "transition", **asdict(record)})
             return record
 
-    def _best_passing_run(self, family: str, backtest_registry: SupportsRuns) -> dict[str, Any]:
+    @staticmethod
+    def _holdout_sharpe(run: dict[str, Any]) -> float | None:
+        """Top-level field when present (post-WI-066 records), else derived from
+        the is_holdout fold entry (backward compatible with older records)."""
+        if run.get("holdout_sharpe") is not None:
+            return float(run["holdout_sharpe"])
+        for fold in run.get("fold_metrics", []):
+            if fold.get("is_holdout"):
+                return None if fold.get("sharpe") is None else float(fold["sharpe"])
+        return None
+
+    def _best_passing_run(
+        self, family: str, backtest_registry: SupportsRuns, allow_negative_holdout: bool
+    ) -> dict[str, Any]:
         passing = [r for r in backtest_registry.runs(family) if r["verdict"] == "pass"]
         if not passing:
             raise LifecycleError(f"{family} has no passing backtest run recorded")
+        if not allow_negative_holdout:
+            # WI-066 review: a pass-verdict with a NEGATIVE (or missing) holdout is an
+            # overfitting signature — refuse it by default; only an explicit human
+            # override may promote on such evidence.
+            healthy = [
+                r for r in passing if (hs := self._holdout_sharpe(r)) is not None and hs >= 0
+            ]
+            if not healthy:
+                raise LifecycleError(
+                    f"{family}: every passing run has a negative or missing holdout Sharpe "
+                    "(dev/holdout divergence — overfitting signature). Promotion refused; "
+                    "a human may override with allow_negative_holdout=True."
+                )
+            passing = healthy
 
         def _sharpe(run: dict[str, Any]) -> float:
             value = run["aggregate_metrics"].get("sharpe")
@@ -156,22 +187,30 @@ class LifecycleRegistry:
         rationale_registry: RationaleRegistry,
         backtest_registry: SupportsRuns,
         actor: str,
+        allow_negative_holdout: bool = False,
     ) -> TransitionRecord:
         """From `candidate` (first promotion) or `backtested` (RE-JUSTIFICATION
         after a demotion — attaches a fresh justifying run so the demotion band
-        reflects current evidence, not the band the family already breached)."""
+        reflects current evidence, not the band the family already breached).
+
+        Runs whose holdout Sharpe is negative/missing are refused unless a HUMAN
+        explicitly overrides — an agent may never promote on divergent evidence."""
         if not rationale_registry.has_rationale(family):
             raise LifecycleError(
                 f"{family} has no recorded economic rationale — cannot enter testing"
             )
-        best = self._best_passing_run(family, backtest_registry)
+        if allow_negative_holdout:
+            _require_human(actor, "promote_to_backtested(allow_negative_holdout=True)")
+        best = self._best_passing_run(family, backtest_registry, allow_negative_holdout)
         return self._transition(
             family,
             "backtested",
             actor,
-            f"rationale on file + passing run {best['run_id']}",
+            f"rationale on file + passing run {best['run_id']}"
+            + (" [human override: negative holdout accepted]" if allow_negative_holdout else ""),
             justifying_run_id=best["run_id"],
             justifying_version=best.get("signal_version"),
+            justifying_params=best.get("signal_params"),
         )
 
     def promote_to_paper_live(self, family: str, actor: str) -> TransitionRecord:

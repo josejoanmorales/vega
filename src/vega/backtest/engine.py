@@ -157,6 +157,7 @@ def run_backtest(
                 f"(dd={agg.max_drawdown}, benchmark_dd={agg.benchmark_max_drawdown})"
             )
 
+    holdout_sharpe: float | None = None
     if holdout_evaluated:
         holdout_frame = frame[frame["date"] <= holdout_dates[-1]]
         holdout_trades = simulate_signal(
@@ -169,6 +170,7 @@ def run_backtest(
             asset_class,
             _bench_series(holdout_dates),
         )
+        holdout_sharpe = holdout_fm.sharpe
         fold_metrics_payload.append(
             {
                 "test_span": (holdout_dates[0], holdout_dates[-1]),
@@ -177,6 +179,14 @@ def run_backtest(
             }
         )
         trades_by_fold.append(tuple(asdict(t) for t in holdout_trades))
+        # Machine-visible dev/holdout divergence (WI-066 review: a negative holdout
+        # on a pass-verdict run sat inert in the payload, read by no gate — only a
+        # human noticing stopped an overfit family from being promoted).
+        if holdout_sharpe is None or holdout_sharpe < 0:
+            notes.append(
+                f"WARNING: dev verdict=pass but holdout sharpe={holdout_sharpe} — "
+                "dev/holdout divergence; promotion gate will refuse without human override"
+            )
 
     touches_after = reg.holdout_touch_count(signal.family) + (1 if holdout_evaluated else 0)
     if touches_after > 1:
@@ -196,5 +206,8 @@ def run_backtest(
         promotion_bar=promotion_bar,
         notes=notes,
         rationale_registry=rationale_registry,
+        holdout_sharpe=holdout_sharpe,
+        signal_params=getattr(signal, "params", None),
+        sizing_model=f"fixed_notional_usd={notional_usd:g}",
     )
     return BacktestReport(record=record, trades_by_fold=tuple(trades_by_fold))

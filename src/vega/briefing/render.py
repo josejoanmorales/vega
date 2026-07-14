@@ -7,9 +7,10 @@ from pathlib import Path
 import pandas as pd
 
 from vega.briefing.engine import BriefingData
+from vega.common.paths import DATA_ROOT
 from vega.data.types import SnapshotConflictError
 
-BRIEFINGS_DIR = Path("data/briefings")
+BRIEFINGS_DIR = DATA_ROOT / "briefings"
 TOP_N = 5
 
 

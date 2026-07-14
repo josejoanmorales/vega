@@ -25,9 +25,10 @@ from pathlib import Path
 from typing import Any
 
 from vega.common.appendlog import AppendLog
+from vega.common.paths import DATA_ROOT
 from vega.lifecycle.rationale import RationaleSource
 
-DEFAULT_PATH = Path("data/backtests/registry.jsonl")
+DEFAULT_PATH = DATA_ROOT / "backtests/registry.jsonl"
 BASE_SHARPE_BAR = 0.8
 LOG_SLOPE = 0.1
 
@@ -67,6 +68,10 @@ class RunRecord:
     holdout_touch_count_after: int
     promotion_bar: float | None
     notes: tuple[str, ...]
+    # provenance added after the WI-066 review — all additive/optional so old records parse:
+    holdout_sharpe: float | None = None  # machine-readable dev/holdout divergence signal
+    signal_params: dict[str, Any] | None = None  # WHICH parameterization produced this run
+    sizing_model: str = ""  # e.g. "fixed_notional_usd=1000" — the basis of every metric
 
 
 class BacktestRegistry:
@@ -96,7 +101,7 @@ class BacktestRegistry:
         self,
         signal_family: str,
         signal_version: str,
-        param_grid_size: int,
+        param_grid_size: int,  # trials THIS run evaluated (one run = one grid point = 1)
         universe_version: str,
         data_span: tuple[str, str],
         n_folds: int,
@@ -107,6 +112,9 @@ class BacktestRegistry:
         promotion_bar: float | None,
         notes: list[str],
         rationale_registry: RationaleSource | None = None,  # defense-in-depth; engine gates first
+        holdout_sharpe: float | None = None,
+        signal_params: dict[str, Any] | None = None,
+        sizing_model: str = "",
     ) -> RunRecord:
         if rationale_registry is not None and not rationale_registry.has_rationale(signal_family):
             raise ValueError(
@@ -131,6 +139,9 @@ class BacktestRegistry:
             holdout_touch_count_after=prior_holdout_touches + (1 if holdout_evaluated else 0),
             promotion_bar=promotion_bar,
             notes=tuple(notes),
+            holdout_sharpe=holdout_sharpe,
+            signal_params=signal_params,
+            sizing_model=sizing_model,
         )
         payload = asdict(record)
         payload["type"] = "run"
