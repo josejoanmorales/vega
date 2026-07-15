@@ -22,7 +22,7 @@ price, percentage, or statistic from memory.
 | `src/vega/backtest/` — walk-forward engine + backtest registry | WI-063 | shipped |
 | `src/vega/risk/` — sizing, portfolio heat, exit-spec writer | WI-064 | shipped |
 | `src/vega/lifecycle/` — signal promotion state machine | WI-065 | shipped |
-| `src/vega/signals/` — first 3 candidate signal families | WI-066 | shipped (2/3 backtested) |
+| `src/vega/signals/` — first 3 candidate signal families | WI-066 | shipped (1 paper-live, 1 held, 1 retired) |
 
 ## Data layer (WI-058)
 
@@ -201,24 +201,30 @@ Three families, rationales recorded in the `RationaleRegistry` before their firs
 (the WI-065-enforced ordering — registry timestamps prove it), price/volume-only,
 equities/ETFs, 545-symbol universe, 6-point total grid:
 
-- `trend_pullback.py` — buy the first up-close after a 3–5% pullback inside a rising-SMA50
-  uptrend. **Dev-fold pass (Sharpe 2.4+ both grid points) but holdout Sharpe went
-  NEGATIVE (-0.08, -0.94) on both** — a textbook dev/holdout divergence. **Deliberately NOT
-  promoted** despite the passing dev verdict; the registry records both runs honestly, the
-  contradiction is surfaced here rather than hidden, and the family stays at `candidate`
-  pending a human decision on whether to investigate or retire it.
+All three families were re-run at **version 1.1** after the WI-066 strongest-model review
+(10 findings fixed @ 83a646f: mixed price spaces, NaN fall-through, grid double-counting,
+trough-depth rule mismatch, `is_new_high` semantics, `signal_params` recorded on run records,
+holdout-divergence machine flag, MarketView pre-grouping perf fix — the 1.5–2h batch became
+~25 min). Final dispositions (Jose's human decisions, 2026-07-14):
+
+- `trend_pullback.py` — buy the first up-close after a 3–5% pullback (measured at the trough
+  since v1.1) inside a rising-SMA50 uptrend. v1.1 holdout recovered from negative to
+  +0.17/+0.28 but dev 1.9–2.5 = ~90% dev→holdout degradation. **HELD at `candidate`** —
+  legal to promote under the gate, judged unwise; revisit with more live history or a v2 rule.
 - `breakout_volume.py` — new N-session closing high (N=40, 55) on ≥1.5× median 60-session
-  *consolidated* volume (never IEX — this family only ever runs against yfinance-sourced
-  bars). **Failed both grid points** (Sharpe ≈0.0 and 0.02, comfortably below the ~0.83–0.86
-  promotion bar) — an honest negative result matching one of the rationale's own stated
-  falsification conditions. Stays at `candidate`; the volume-confirmation edge did not
-  materialize in this universe/window.
-- `oversold_reversion.py` — 3-session drop ≥2.0–2.5×ATR14 while still above SMA100, 7-session
-  time stop (doctrine override), half off at +1.5R. **Passed both grid points with holdout
-  Sharpe (3.5–3.7) *exceeding* dev Sharpe (1.3)** — consistent, non-degrading out-of-sample
-  performance. **Promoted to `backtested`** (agent-legal per WI-065's contract: rationale +
-  a passing run). `paper-live` remains Jose's deliberate human act — the state machine's
-  `human:`-prefix gate would reject anything else.
+  *consolidated* volume (never IEX). **Failed both grid points twice (v1.0 and v1.1,
+  Sharpe ≈0.0–0.02)** — its own registered falsification condition was met. **RETIRED**
+  (terminal; transition `0567a1ae`, actor `human:jose`). The rationale stays on file as an
+  honest negative result.
+- `oversold_reversion.py` — 3-session drop ≥2.0–2.5×ATR14 (fully in adjusted price space
+  since v1.1) while still above SMA100, 7-session time stop (doctrine override), half off at
+  +1.5R. v1.1: **passed both grid points, holdout Sharpe 3.75/3.67 vs dev 1.31/1.30** —
+  non-degrading out-of-sample. **Promoted to `paper-live`** by Jose 2026-07-14 (transition
+  `2305b7bf`, justifying run `29469e7e`, `justifying_params {"k": 2.0}`). Calibration note
+  on record: holdout > dev likely reflects a reversion-friendly recent window; the realistic
+  live expectation is dev-level (~1.3), and the demotion band polices it once WI-087 delivers
+  exit fills. Verdicts were computed under the executor's fixed-$1k sizing; WI-067 replaces
+  that with risk-engine qty.
 
 `helpers.py` centralizes the price/volume math (SMA, N-session-high, median volume,
 3-session change) as pure functions over an already-PIT-truncated bars frame; ATR reuses
