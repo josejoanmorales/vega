@@ -10,6 +10,7 @@ from typing import Any
 import duckdb
 import pandas as pd
 
+from vega.briefing.calls import EligibleFamily, RenderedCall, RenderedRejection
 from vega.data import snapshot
 from vega.execution.executor import read_failures
 from vega.regime.calendar import MacroEvent, macro_events_within
@@ -27,6 +28,12 @@ class BriefingData:
     failures: list[dict[str, Any]]
     store_range: tuple[str, str]
     quarantined_today: int
+    # WI-067, additive: absent (all-empty defaults) renders the v1 sections
+    # byte-identically — ranked calls only appear once a family is eligible.
+    calls: tuple[RenderedCall, ...] = ()
+    rejections: tuple[RenderedRejection, ...] = ()
+    eligible_families: tuple[EligibleFamily, ...] = ()
+    no_trade_reason: str | None = None
 
 
 def top_movers(bars: pd.DataFrame) -> pd.DataFrame:

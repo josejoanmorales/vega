@@ -68,6 +68,17 @@ def test_execute_records_fill_linked_to_rec(tmp_path: Path) -> None:
     assert pending_longs(ledger) == []
 
 
+def test_execute_sizes_from_risk_engine_qty_when_present(tmp_path: Path) -> None:
+    ledger = LedgerStore(tmp_path / "l.jsonl")
+    rec = _rec(qty=4.2)  # risk-engine-sized qty must win over the notional fallback
+    ledger.append(rec)
+    filled, failed = execute_pending(
+        ledger, FakeBackend(), notional_usd=1000.0, failures_path=tmp_path / "f.jsonl"
+    )
+    assert (filled, failed) == (1, 0)
+    assert ledger.fills()[0]["qty"] == 4.2
+
+
 def test_failure_is_logged_and_batch_continues(tmp_path: Path) -> None:
     ledger = LedgerStore(tmp_path / "l.jsonl")
     bad = _rec(symbol="GRAM", asset_class="crypto")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -20,6 +21,29 @@ def _movers_table(movers: pd.DataFrame) -> str:
     picks = pd.concat([movers.head(TOP_N), movers.tail(TOP_N)]).drop_duplicates("symbol")
     lines = ["| symbol | close | Δ% |", "|---|---|---|"]
     lines += [f"| {r.symbol} | {r.close:,.2f} | {r.pct:+.2f}% |" for r in picks.itertuples()]
+    return "\n".join(lines) + "\n"
+
+
+def _calls_table(calls: tuple[Any, ...]) -> str:
+    lines = [
+        "| rank | symbol | family:version | thesis | qty | entry | stop | worst-case | "
+        "time stop | profit rule | invalidation | heat (total) |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for c in calls:
+        lines.append(
+            f"| {c.rank} | {c.symbol} | {c.family}:{c.version} | {c.thesis} | "
+            f"{c.qty:.6f} | {c.entry_ref_price:,.2f} | {c.stop_price:,.2f} | "
+            f"{c.worst_case_r_multiple:.2f}R | {c.time_stop_sessions} sessions "
+            f"({c.time_stop_date}) | {c.profit_rule} | {c.invalidation} | "
+            f"{c.heat_after_r.get('total', 0.0):.2f}R |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _rejections_table(rejections: tuple[Any, ...]) -> str:
+    lines = ["| symbol | family | reason | detail |", "|---|---|---|---|"]
+    lines += [f"| {r.symbol} | {r.family} | {r.reason} | {r.detail} |" for r in rejections]
     return "\n".join(lines) + "\n"
 
 
@@ -52,6 +76,20 @@ def render(data: BriefingData) -> str:
         parts += [
             f"- {f['at']} `{f['symbol']}` (rec {f['ref_id'][:8]}): {f['error']}"
             for f in data.failures
+        ]
+    if data.eligible_families:
+        parts += ["", "## Ranked calls", ""]
+        if data.calls:
+            parts.append(_calls_table(data.calls))
+        else:
+            parts += [f"**No trade today** — {data.no_trade_reason}", ""]
+        if data.rejections:
+            parts += ["### Considered and rejected", "", _rejections_table(data.rejections)]
+        parts += ["_Eligible signal families:_"]
+        parts += [
+            f"- `{f.family}` ({f.state}) — justifying run `{f.justifying_run_id}`, "
+            f"params {f.justifying_params}"
+            for f in data.eligible_families
         ]
     parts += [
         "",

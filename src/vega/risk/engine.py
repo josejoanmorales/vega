@@ -51,6 +51,7 @@ def propose(
     earnings: EarningsFact,
     invalidation: str,
     time_stop_sessions: int = DEFAULT_TIME_STOP_SESSIONS,
+    profit_take_half_at_r: float = PROFIT_TAKE_HALF_AT_R,
     risk_fraction: float = DEFAULT_RISK_FRACTION,
 ) -> SizedProposal | Rejection:
     """`frame` must contain the symbol's raw OHLC history AND SPY's history when
@@ -98,7 +99,7 @@ def propose(
     exit_params = {
         "stop_atr_mult": STOP_ATR_MULT[asset_class],
         "gap_stress_mult": GAP_STRESS_MULT[asset_class],
-        "take_half_at_r": PROFIT_TAKE_HALF_AT_R,
+        "take_half_at_r": profit_take_half_at_r,
         "trail_atr_mult": PROFIT_TRAIL_ATR_MULT,
         "time_stop_sessions": time_stop_sessions,  # CANONICAL deadline (backtest semantics)
         "worst_case_r_multiple": sizing.worst_case_r_multiple,
@@ -117,7 +118,7 @@ def propose(
         time_stop_sessions=time_stop_sessions,
         exit_params=exit_params,
         profit_rule_text=(
-            f"half at +{PROFIT_TAKE_HALF_AT_R:g}R, trail remainder via "
+            f"half at +{profit_take_half_at_r:g}R, trail remainder via "
             f"{PROFIT_TRAIL_ATR_MULT:g}xATR chandelier stop"
         ),
         invalidation=invalidation,

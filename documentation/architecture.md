@@ -23,6 +23,7 @@ price, percentage, or statistic from memory.
 | `src/vega/risk/` — sizing, portfolio heat, exit-spec writer | WI-064 | shipped |
 | `src/vega/lifecycle/` — signal promotion state machine | WI-065 | shipped |
 | `src/vega/signals/` — first 3 candidate signal families | WI-066 | shipped (1 paper-live, 1 held, 1 retired) |
+| `src/vega/briefing/calls.py` — ranked calls, entries only | WI-067 | shipped |
 
 ## Data layer (WI-058)
 
@@ -229,6 +230,56 @@ holdout-divergence machine flag, MarketView pre-grouping perf fix — the 1.5–
 `helpers.py` centralizes the price/volume math (SMA, N-session-high, median volume,
 3-session change) as pure functions over an already-PIT-truncated bars frame; ATR reuses
 the one shared `vega.common.atr` implementation via a thin adapter, never reimplemented.
+
+## Ranked calls (WI-067) — entries only; exits are WI-087
+
+The first output a manager could act on: `briefing/calls.py` wires signals (WI-066) →
+lifecycle eligibility (WI-065) → risk engine (WI-064) → ledger (WI-060) → paper executor
+(WI-061) into one deterministic daily pass. Never mutates or closes a position — that's
+WI-087's job (sell orders, exit monitoring, exit fills, and therefore live demotion).
+
+- **Eligibility is family-agnostic and evidence-locked**: for every family in
+  `FAMILY_SIGNALS` currently `paper-live`/`trusted`, `build_calls` resolves the exact
+  `justifying_params` from the backtest run that earned its promotion and instantiates
+  the signal with THOSE parameters — never defaults. A family that's eligible but missing
+  that evidence is a bookkeeping bug, not a "guess and proceed" situation: `CallsError`
+  raises rather than run unvalidated parameters live (closes WI-066 review finding #2 —
+  a promoted family's live behavior can no longer silently drift from what was validated).
+- **Risk-sizing runs in rank order** (confidence DESC, family dev-Sharpe DESC, symbol ASC
+  — a full deterministic tiebreak) and heat accumulates via `open_position_heat()` as each
+  proposal is accepted, so higher-ranked calls claim heat first and the caps alone bound
+  the day's count (no separate max-calls knob). Open positions are reconstructed from the
+  ledger as every FILLED long with no exit fill (the ledger has no exit concept until
+  WI-087) — the ORIGINAL stop price is used for heat (no trailing-stop tracking yet),
+  which overstates rather than understates heat.
+- **Correctness fix discovered while wiring this in**: `risk.engine.propose()` accepted a
+  `time_stop_sessions` override but had NO way to honor a family's profit-take override —
+  `oversold_reversion_v1`'s registered and backtested exit spec is "half at +1.5R" (not
+  doctrine's default +2.0R). Left unfixed, live paper trades would have silently used a
+  different exit rule than what was backtested and promoted — exactly the live/backtest
+  divergence class the WI-064 review already fixed once (single writer of exit specs).
+  `propose()` now accepts `profit_take_half_at_r` (default = doctrine), mirroring the
+  existing `time_stop_sessions` override pattern; live-smoke-verified (`take_half_at_r`:
+  1.5 correctly appears on real `exit_params` for both live CDW/CSCO calls below).
+- **Same-day auto-execution (`execution/executor.py`)**: `execute_pending` now sizes from
+  the recommendation's risk-engine `qty` when present, falling back to the fixed notional
+  only for recommendations that bypassed the risk engine (e.g. hand-entered overrides) —
+  no behavior change for existing callers/tests that never set `qty`.
+- **Rendering**: a `## Ranked calls` section appears only once ≥1 family is eligible (empty
+  `eligible_families` renders the v1 sections byte-identically — no regression for the
+  streak gate). An empty call list still renders an explicit **"No trade today"** line with
+  a reason (`regime risk_off` > `macro T-1/T window` > `no qualifying setups` > `N
+  candidates considered, none cleared gates/heat` — checked in that priority order since
+  regime/macro are blanket, symbol-independent gates). A rejections table always shows what
+  was considered and refused — evidence integrity means the reader sees the denominator,
+  not just the winners.
+- **Live smoke (2026-07-15, real store/regime/Alpaca account)**: 2 real calls
+  (`oversold_reversion_v1`, CDW & CSCO), correctly risk-sized (qty from the engine, not
+  $1,000 notional), correct 7-session time stop and +1.5R profit-take override, heat
+  accumulating 0.80R → 1.60R across the ranked pair, both landed on the ledger and
+  auto-submitted to Alpaca paper (`status: accepted`). 2 real rejections
+  (`earnings_in_horizon`, network-resolved `EarningsFact` outside the engine, correctly
+  gating both ELV and EW). 208 tests total (was 182), verify.sh green.
 
 ## Verification gate
 

@@ -1,7 +1,8 @@
 """Paper-trading executor: pending ledger longs → Alpaca paper market orders.
 
-Sizing is a fixed configurable notional until WI-064's risk engine replaces
-the caller-side qty computation (stated assumption on the work item).
+Sizing prefers the risk engine's `qty` (WI-064/WI-067: recommendations built
+via `risk.engine.to_recommendation` always carry it); fixed notional is the
+fallback only for recommendations that bypassed the risk engine entirely.
 """
 
 from __future__ import annotations
@@ -114,11 +115,20 @@ def execute_pending(
     notional_usd: float = DEFAULT_NOTIONAL_USD,
     failures_path: Path = FAILURES_PATH,
 ) -> tuple[int, int]:
-    """Execute all pending longs. Returns (filled, failed). Failures never raise."""
+    """Execute all pending longs. Sizes from the recommendation's risk-engine
+    `qty` when present (WI-067) — the risk-sized qty reflects the family's
+    actual R-based sizing and must win over the notional placeholder. Falls
+    back to fixed notional only for recommendations that never went through
+    the risk engine (e.g. hand-entered ledger overrides). Returns (filled,
+    failed). Failures never raise."""
     filled = 0
     failed = 0
     for rec in pending_longs(ledger):
-        qty = round(notional_usd / float(rec["entry_ref_price"]), 6)
+        qty = (
+            round(float(rec["qty"]), 6)
+            if rec.get("qty")
+            else round(notional_usd / float(rec["entry_ref_price"]), 6)
+        )
         try:
             result = backend.submit_market_buy(rec["symbol"], qty, rec["asset_class"])
             ledger.append_fill(

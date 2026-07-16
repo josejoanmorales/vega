@@ -1,8 +1,10 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from vega.briefing.calls import EligibleFamily, RenderedCall, RenderedRejection
 from vega.briefing.engine import BriefingData, top_movers
 from vega.briefing.render import render, write_briefing
 from vega.data.types import SnapshotConflictError
@@ -56,6 +58,60 @@ def test_failures_section_appears_when_present() -> None:
         _data(failures=[{"at": "t", "symbol": "GRAM", "ref_id": "abcdefgh", "error": "boom"}])
     )
     assert "Execution failures" in out and "GRAM" in out
+
+
+def test_no_eligible_families_renders_v1_sections_unchanged() -> None:
+    # byte-identical to the pre-WI-067 render — the ranked-calls block must not
+    # appear at all until a family is actually eligible for recommendations
+    assert "Ranked calls" not in render(_data())
+
+
+def test_no_trade_renders_explicit_line_with_reason() -> None:
+    data = replace(
+        _data(),
+        eligible_families=(
+            EligibleFamily("oversold_reversion_v1", "paper-live", "run-1", {"k": 2.0}, 1.3),
+        ),
+        no_trade_reason="regime composite is risk_off as of 2026-07-02 — no entries permitted",
+    )
+    out = render(data)
+    assert "## Ranked calls" in out
+    assert "**No trade today** — regime composite is risk_off" in out
+    assert "oversold_reversion_v1` (paper-live)" in out
+
+
+def test_ranked_calls_table_renders_with_rejections() -> None:
+    call = RenderedCall(
+        rank=1,
+        symbol="AAPL",
+        family="oversold_reversion_v1",
+        version="1.1",
+        thesis="3-session shock reversion",
+        qty=1.234567,
+        entry_ref_price=230.0,
+        stop_price=221.0,
+        worst_case_r_multiple=1.8,
+        time_stop_sessions=7,
+        time_stop_date="2026-07-11",
+        profit_rule="half at +1.5R, trail remainder via 2.5xATR chandelier stop",
+        invalidation="close below the 100-session SMA",
+        heat_after_r={"total": 0.98, "us_equity_beta": 0.98},
+        ref_id="rec-1",
+    )
+    rejection = RenderedRejection(
+        "MSFT", "oversold_reversion_v1", "earnings_unknown", "vendor down"
+    )
+    data = replace(
+        _data(),
+        eligible_families=(
+            EligibleFamily("oversold_reversion_v1", "paper-live", "run-1", {"k": 2.0}, 1.3),
+        ),
+        calls=(call,),
+        rejections=(rejection,),
+    )
+    out = render(data)
+    assert "AAPL" in out and "1.234567" in out and "7 sessions (2026-07-11)" in out
+    assert "### Considered and rejected" in out and "MSFT" in out and "earnings_unknown" in out
 
 
 def test_briefing_write_once(tmp_path: Path) -> None:
