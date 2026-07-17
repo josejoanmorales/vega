@@ -103,6 +103,16 @@ class LifecycleRegistry:
         events = [r for r in self._log.records() if r["signal_family"] == family]
         return events[-1]["to_state"] if events else "candidate"
 
+    def families(self) -> list[str]:
+        """Every family that has ever transitioned, in first-seen order — the
+        authoritative iteration set for consumers (WI-067 review: iterating a
+        hardcoded name→class dict instead made an eligible family whose class
+        wasn't registered silently invisible)."""
+        seen: dict[str, None] = {}
+        for r in self._log.records():
+            seen.setdefault(r["signal_family"], None)
+        return list(seen)
+
     def eligible_for_recommendations(self, family: str) -> bool:
         return is_eligible_state(self.current_state(family))
 

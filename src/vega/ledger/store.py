@@ -83,3 +83,32 @@ class LedgerStore:
         entries = self.entries()
         superseded = {r["supersedes"] for r in entries if r.get("supersedes")}
         return [r for r in entries if r["id"] not in superseded]
+
+    def latest_with_fills(self) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+        """`latest()` recommendations paired with their fill, resolved through
+        supersede chains: a fill on ANY id in a rec's chain belongs to the
+        surviving rec (WI-067 review — fills key on the id that was pending at
+        execution time, so a filled-then-corrected position must neither vanish
+        from heat accounting nor be re-executed as 'unfilled'). When several
+        fill records exist for one chain (e.g. a later reconciliation adds the
+        real price), the one carrying a price wins over price-less acceptances.
+        This is the ONE definition of 'a (rec, fill) pair' — the executor's
+        pending scan and the briefing's open-position heat both consume it."""
+        entries = self.entries()
+        parent = {r["id"]: r.get("supersedes") for r in entries}
+
+        def _chain_root(rec_id: str) -> str:
+            seen = set()
+            while parent.get(rec_id) and rec_id not in seen:
+                seen.add(rec_id)
+                rec_id = parent[rec_id]  # type: ignore[assignment]
+            return rec_id
+
+        fills_by_root: dict[str, dict[str, Any]] = {}
+        for fill in self.fills():  # chronological — later records are newer knowledge
+            root = _chain_root(fill["ref_id"])
+            current = fills_by_root.get(root)
+            if current is not None and current.get("price") is not None:
+                continue  # a priced (real) fill is final — never displaced
+            fills_by_root[root] = fill
+        return [(rec, fills_by_root.get(_chain_root(rec["id"]))) for rec in self.latest()]

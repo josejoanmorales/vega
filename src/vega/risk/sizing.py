@@ -34,12 +34,16 @@ class SizingResult:
     worst_case_r_multiple: float  # worst_case / (risk_fraction * equity) — <= 2.0 by construction
 
 
-def compute_stop(entry_price: float, atr: float, asset_class: str) -> float:
+def compute_stop(
+    entry_price: float, atr: float, asset_class: str, stop_atr_mult: float | None = None
+) -> float:
+    """`stop_atr_mult` defaults to the asset class's doctrine multiple; a family
+    override flows through propose(), which band-validates it first."""
     if entry_price <= 0:
         raise SizingError("entry_price must be positive")
     if atr <= 0:
         raise SizingError("atr must be positive")
-    k = STOP_ATR_MULT[asset_class]
+    k = STOP_ATR_MULT[asset_class] if stop_atr_mult is None else stop_atr_mult
     stop = entry_price - k * atr
     if stop <= 0:
         raise SizingError(f"computed stop {stop} is non-positive (entry={entry_price}, atr={atr})")

@@ -34,6 +34,10 @@ class BriefingData:
     rejections: tuple[RenderedRejection, ...] = ()
     eligible_families: tuple[EligibleFamily, ...] = ()
     no_trade_reason: str | None = None
+    # A calls-path failure is PUBLISHED, not just printed — a briefing on a day
+    # the call engine failed must be distinguishable from "no eligible families"
+    # (WI-067 review: evidence integrity requires the miss on the record).
+    calls_error: str | None = None
 
 
 def top_movers(bars: pd.DataFrame) -> pd.DataFrame:

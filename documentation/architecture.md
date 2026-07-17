@@ -252,19 +252,25 @@ WI-087's job (sell orders, exit monitoring, exit fills, and therefore live demot
   ledger as every FILLED long with no exit fill (the ledger has no exit concept until
   WI-087) — the ORIGINAL stop price is used for heat (no trailing-stop tracking yet),
   which overstates rather than understates heat.
-- **Correctness fix discovered while wiring this in**: `risk.engine.propose()` accepted a
-  `time_stop_sessions` override but had NO way to honor a family's profit-take override —
-  `oversold_reversion_v1`'s registered and backtested exit spec is "half at +1.5R" (not
-  doctrine's default +2.0R). Left unfixed, live paper trades would have silently used a
-  different exit rule than what was backtested and promoted — exactly the live/backtest
-  divergence class the WI-064 review already fixed once (single writer of exit specs).
-  `propose()` now accepts `profit_take_half_at_r` (default = doctrine), mirroring the
-  existing `time_stop_sessions` override pattern; live-smoke-verified (`take_half_at_r`:
-  1.5 correctly appears on real `exit_params` for both live CDW/CSCO calls below).
-- **Same-day auto-execution (`execution/executor.py`)**: `execute_pending` now sizes from
-  the recommendation's risk-engine `qty` when present, falling back to the fixed notional
-  only for recommendations that bypassed the risk engine (e.g. hand-entered overrides) —
-  no behavior change for existing callers/tests that never set `qty`.
+- **Exit-spec fidelity (`risk/engine.py`, hardened by the WI-067 review)**: `propose()`
+  honors ALL FOUR per-family exit params the backtester honors (`time_stop_sessions`,
+  `profit_take_half_at_r`, `stop_atr_mult`, `profit_trail_atr_mult`) — the build initially
+  plumbed only two, and the review showed that "honoring a subset" silently re-creates the
+  live/backtest exit divergence the single-writer doctrine exists to prevent (simulate.py
+  honors all four; the first family to override stop or trail would have diverged). Every
+  override is validated against a doctrine band (`common/doctrine.py` `*_BAND` constants):
+  a typo'd exit spec is a `Rejection`, never a binding ledger contract.
+- **Same-day auto-execution (`execution/executor.py`, hardened by the review)**:
+  `execute_pending(as_of, equity)` submits ONLY calls decided at the current session — a
+  pending rec from an earlier session missed its T+1 open (the only fill the backtest
+  models) and EXPIRES with a one-time failure record, never late-fills. qty is exclusively
+  the risk engine's: a qty-less or non-positive rec is refused (the $1,000 notional
+  fallback is gone — a sizing decision the risk engine never made must not enter the track
+  record), and any order breaching the notional ceiling (25% of equity) is refused, not
+  clamped. `reconcile_fills` re-polls orders whose ledger record is still an acceptance
+  (price=None — the normal pre-market case) and appends the real fill or terminal cancel
+  once the venue knows it; `LedgerStore.latest_with_fills` resolves fills through
+  supersede chains and prefers priced records.
 - **Rendering**: a `## Ranked calls` section appears only once ≥1 family is eligible (empty
   `eligible_families` renders the v1 sections byte-identically — no regression for the
   streak gate). An empty call list still renders an explicit **"No trade today"** line with
@@ -280,6 +286,43 @@ WI-087's job (sell orders, exit monitoring, exit fills, and therefore live demot
   auto-submitted to Alpaca paper (`status: accepted`). 2 real rejections
   (`earnings_in_horizon`, network-resolved `EarningsFact` outside the engine, correctly
   gating both ELV and EW). 208 tests total (was 182), verify.sh green.
+
+### WI-067 strongest-model review (10/10 findings confirmed, all fixed same session)
+
+The review's top finding was empirically live: the scheduled launchd run was already
+crashing on the write-once briefing check (regime inputs drift between same-day runs),
+and under the initial WI-067 build that crash landed AFTER ledger appends and BEFORE
+execution — same-day re-runs would have stacked duplicate positions. The fix set:
+
+- **Idempotency by position, not by file**: `build_calls` never proposes a symbol with an
+  active position — filled (chain-resolved) or same-session pending — rejecting it as
+  `already_held`. Same-day re-runs and multi-family overlap structurally cannot stack
+  entries; the write-once conflict is now tolerated (first briefing of the day wins) and
+  the run continues to reconciliation/execution.
+- **Failure domains split in `briefing/__main__.py`**: stale store (>4 days) and an
+  unreachable Alpaca account are hard gates for the whole calls path; a calls-generation
+  failure fails CLOSED for execution (partial appends never execute unpublished) and is
+  PUBLISHED via `BriefingData.calls_error` — a day the call engine failed is
+  distinguishable on the record from "no eligible families".
+- **Position reconstruction (`_active_positions`)**: filled longs resolve fills through
+  supersede chains (a filled-then-corrected position keeps its heat and is never
+  re-bought); THIS session's pending calls carry heat (they execute later in the same
+  run); stale pending calls don't (they expire); terminally dead orders don't.
+- **Honest no-trade reasons**: derived from the rejections actually collected (reason
+  counts), never re-derived gate conditions — zero-proposal days say "no qualifying
+  setups", not "blocked by FOMC".
+- **Loud family bookkeeping**: eligibility iterates `lifecycle.families()` (new API), so
+  a paper-live family missing a `FAMILY_SIGNALS` class registration raises `CallsError`
+  instead of being silently untradeable.
+- **Efficiency/reuse**: per-symbol frames into `propose()` (no full-frame masks per
+  candidate), `view.bars()` reused instead of a parallel groupby, date-bounded
+  `load_signal_frame(as_of)` (frame stays O(lookback) as the store grows), registry runs
+  read once, `live_account_equity()` deduplicated into `execution/executor.py`, shared
+  test fixtures in `tests/conftest.py`, rank computed at construction, render tables
+  typed. Live re-run proof: the fixed pipeline ran against the production ledger the same
+  night — 0 duplicate appends, conflict tolerated, and `reconcile_fills` healed both
+  broken acceptance records into real priced fills (CDW @ 132.55, CSCO @ 110.66).
+  221 tests (was 208), verify.sh green.
 
 ## Verification gate
 

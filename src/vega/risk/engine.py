@@ -27,8 +27,12 @@ from vega.common.doctrine import (
     DEFAULT_TIME_STOP_SESSIONS,
     GAP_STRESS_MULT,
     PROFIT_TAKE_HALF_AT_R,
+    PROFIT_TAKE_HALF_AT_R_BAND,
     PROFIT_TRAIL_ATR_MULT,
+    PROFIT_TRAIL_ATR_MULT_BAND,
     STOP_ATR_MULT,
+    STOP_ATR_MULT_BAND,
+    TIME_STOP_SESSIONS_BAND,
 )
 from vega.ledger.types import Recommendation
 from vega.regime.regime import RegimeState
@@ -37,6 +41,32 @@ from vega.risk.gates import EarningsFact, check_all_gates
 from vega.risk.heat import CAPS_R, CAUTION_TOTAL_CAP_R, OpenPositionHeat, cluster_heat, first_breach
 from vega.risk.sizing import DEFAULT_RISK_FRACTION, SizingError, compute_qty, compute_stop
 from vega.risk.types import Rejection, SizedProposal
+
+
+def _band_violation(
+    symbol: str,
+    time_stop_sessions: int,
+    profit_take_half_at_r: float,
+    stop_atr_mult: float,
+    profit_trail_atr_mult: float,
+) -> Rejection | None:
+    """Every per-family exit override must sit inside its doctrine band — a
+    typo'd exit spec is rejected here instead of becoming a binding ledger
+    contract (WI-067 review: propose() previously wrote any float verbatim)."""
+    checks = (
+        ("time_stop_sessions", time_stop_sessions, TIME_STOP_SESSIONS_BAND),
+        ("take_half_at_r", profit_take_half_at_r, PROFIT_TAKE_HALF_AT_R_BAND),
+        ("stop_atr_mult", stop_atr_mult, STOP_ATR_MULT_BAND),
+        ("trail_atr_mult", profit_trail_atr_mult, PROFIT_TRAIL_ATR_MULT_BAND),
+    )
+    for name, value, (lo, hi) in checks:
+        if not lo <= value <= hi:
+            return Rejection(
+                symbol,
+                "exit_spec_out_of_doctrine",
+                f"{name}={value} outside the doctrine band [{lo}, {hi}]",
+            )
+    return None
 
 
 def propose(
@@ -52,12 +82,27 @@ def propose(
     invalidation: str,
     time_stop_sessions: int = DEFAULT_TIME_STOP_SESSIONS,
     profit_take_half_at_r: float = PROFIT_TAKE_HALF_AT_R,
+    stop_atr_mult: float | None = None,
+    profit_trail_atr_mult: float = PROFIT_TRAIL_ATR_MULT,
     risk_fraction: float = DEFAULT_RISK_FRACTION,
 ) -> SizedProposal | Rejection:
     """`frame` must contain the symbol's raw OHLC history AND SPY's history when
     asset_class is crypto (spy_correlation raises loudly on a SPY-less frame —
-    that is a caller bug, not an unmeasurable market fact)."""
+    that is a caller bug, not an unmeasurable market fact).
+
+    All four per-family exit overrides the backtester honors are accepted here
+    (WI-067 review: honoring only a subset silently re-created the live/backtest
+    exit divergence the single-writer doctrine exists to prevent). `stop_atr_mult`
+    defaults to the asset class's doctrine multiple; every override is validated
+    against its doctrine band."""
     on_date = date.fromisoformat(as_of)
+    k_stop = STOP_ATR_MULT[asset_class] if stop_atr_mult is None else stop_atr_mult
+
+    band_rejection = _band_violation(
+        symbol, time_stop_sessions, profit_take_half_at_r, k_stop, profit_trail_atr_mult
+    )
+    if band_rejection is not None:
+        return band_rejection
 
     gate_rejection = check_all_gates(symbol, on_date, time_stop_sessions, regime, earnings)
     if gate_rejection is not None:
@@ -68,7 +113,7 @@ def propose(
         return Rejection(symbol, "insufficient_history", "not enough sessions to compute ATR14")
 
     try:
-        stop = compute_stop(entry_ref_price, atr, asset_class)
+        stop = compute_stop(entry_ref_price, atr, asset_class, stop_atr_mult=k_stop)
         sizing = compute_qty(entry_ref_price, stop, equity, asset_class, risk_fraction)
     except SizingError as exc:
         return Rejection(symbol, "sizing_error", str(exc))
@@ -97,10 +142,10 @@ def propose(
         )
 
     exit_params = {
-        "stop_atr_mult": STOP_ATR_MULT[asset_class],
+        "stop_atr_mult": k_stop,
         "gap_stress_mult": GAP_STRESS_MULT[asset_class],
         "take_half_at_r": profit_take_half_at_r,
-        "trail_atr_mult": PROFIT_TRAIL_ATR_MULT,
+        "trail_atr_mult": profit_trail_atr_mult,
         "time_stop_sessions": time_stop_sessions,  # CANONICAL deadline (backtest semantics)
         "worst_case_r_multiple": sizing.worst_case_r_multiple,
         "atr_at_proposal": round(atr, 6),
@@ -119,7 +164,7 @@ def propose(
         exit_params=exit_params,
         profit_rule_text=(
             f"half at +{profit_take_half_at_r:g}R, trail remainder via "
-            f"{PROFIT_TRAIL_ATR_MULT:g}xATR chandelier stop"
+            f"{profit_trail_atr_mult:g}xATR chandelier stop"
         ),
         invalidation=invalidation,
         cluster=classify(symbol, asset_class),
@@ -160,6 +205,7 @@ def to_recommendation(
         signal_attribution=signal_attribution,
         exit_params=proposal.exit_params,
         qty=proposal.qty,
+        as_of=as_of,  # decision session — execution expires stale calls (T+1-open model)
     )
 
 

@@ -3,11 +3,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from conftest import make_ohlc_frame, steep_uptrend_then_shock
 from vega.backtest.registry import BacktestRegistry
 from vega.backtest.signals import EntryProposal
 from vega.briefing.calls import (
     CallsError,
-    _open_positions_from_ledger,
+    RenderedRejection,
+    _active_positions,
+    _no_trade_reason,
     _rank_key,
     build_calls,
 )
@@ -20,48 +23,17 @@ from vega.regime.regime import RegimeState
 from vega.risk.gates import EarningsFact
 
 NO_EARNINGS = EarningsFact("none")
-
-
-def _ohlc_frame(closes: list[float], shocked: set[int], symbol: str = "AAA") -> pd.DataFrame:
-    """Raw OHLC + volume around each close; wider range on shocked indices
-    (adapted from test_signals_oversold_reversion.py's fixture, +volume so
-    the frame satisfies the general bars schema)."""
-    dates = pd.date_range("2026-01-01", periods=len(closes), freq="D").strftime("%Y-%m-%d")
-    rows = []
-    for i, (d, c) in enumerate(zip(dates, closes, strict=True)):
-        spread = 5.0 if i in shocked else 2.0
-        rows.append(
-            {
-                "symbol": symbol,
-                "date": d,
-                "adj_close": c,
-                "close": c,
-                "high": c + spread,
-                "low": c - spread,
-                "volume": 1_000_000.0,
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def _steep_uptrend_then_shock(drop_total: float) -> list[float]:
-    base = [100.0 + i * 1.0 for i in range(100)]
-    peak = base[-1]
-    return base + [peak - drop_total / 3, peak - 2 * drop_total / 3, peak - drop_total]
+AS_OF = "2026-04-13"  # last date of the 103-bar conftest fixture
 
 
 def _shocked_frame(symbol: str = "AAA", drop_total: float = 39.0) -> pd.DataFrame:
-    closes = _steep_uptrend_then_shock(drop_total)
-    return _ohlc_frame(closes, shocked={100, 101, 102}, symbol=symbol)
-
-
-def _multi_symbol_frame(symbols: list[str], drop_total: float = 39.0) -> pd.DataFrame:
-    return pd.concat([_shocked_frame(s, drop_total) for s in symbols], ignore_index=True)
+    closes = steep_uptrend_then_shock(drop_total)
+    return make_ohlc_frame(closes, shocked={100, 101, 102}, symbol=symbol, volume=1_000_000.0)
 
 
 def _regime(composite: str = "risk_on") -> RegimeState:
     return RegimeState(
-        as_of="2026-04-13",
+        as_of=AS_OF,
         trend="risk_on",
         vix=15.0,
         vix_band="calm",
@@ -90,7 +62,7 @@ def _seed_paper_live(
         signal_version="1.1",
         param_grid_size=1,
         universe_version="v1",
-        data_span=("2025-01-01", "2026-04-13"),
+        data_span=("2025-01-01", AS_OF),
         n_folds=2,
         fold_metrics=[{"sharpe": 1.0}, {"sharpe": 1.5}],
         aggregate_metrics={"sharpe": dev_sharpe, "n_trades": 40},
@@ -105,6 +77,22 @@ def _seed_paper_live(
     lifecycle.promote_to_backtested(family, rationale, registry, actor="agent:sonnet")
     lifecycle.promote_to_paper_live(family, actor="human:jose")
     return lifecycle, registry
+
+
+def _build(tmp_path: Path, lifecycle, registry, **overrides):  # type: ignore[no-untyped-def]
+    kwargs: dict[str, object] = {
+        "frame": _shocked_frame(),
+        "as_of": AS_OF,
+        "equity": 100_000.0,
+        "regime": _regime(),
+        "ledger": LedgerStore(tmp_path / "ledger.jsonl"),
+        "lifecycle": lifecycle,
+        "backtest_registry": registry,
+        "universe_entries": _universe(["AAA"]),
+        "earnings_lookup": lambda *_: NO_EARNINGS,
+    }
+    kwargs.update(overrides)
+    return build_calls(**kwargs)  # type: ignore[arg-type]
 
 
 def _rec(**overrides: object) -> Recommendation:
@@ -122,6 +110,7 @@ def _rec(**overrides: object) -> Recommendation:
         "invalidation": "fixture",
         "signal_attribution": ("fixture_family",),
         "qty": 100.0,
+        "as_of": AS_OF,
     }
     base.update(overrides)
     return Recommendation(**base)  # type: ignore[arg-type]
@@ -131,57 +120,20 @@ def _rec(**overrides: object) -> Recommendation:
 
 
 def test_no_eligible_families_returns_empty_result(tmp_path: Path) -> None:
-    ledger = LedgerStore(tmp_path / "ledger.jsonl")
     lifecycle = LifecycleRegistry(tmp_path / "lifecycle.jsonl")
     registry = BacktestRegistry(tmp_path / "registry.jsonl")
-    result = build_calls(
-        frame=_shocked_frame(),
-        as_of="2026-04-13",
-        equity=100_000.0,
-        regime=_regime(),
-        ledger=ledger,
-        lifecycle=lifecycle,
-        backtest_registry=registry,
-        universe_entries=_universe(["AAA"]),
-    )
+    ledger = LedgerStore(tmp_path / "ledger.jsonl")
+    result = _build(tmp_path, lifecycle, registry, ledger=ledger)
     assert result.eligible_families == ()
     assert result.calls == ()
     assert result.no_trade_reason is None
     assert ledger.entries() == []
 
 
-def test_candidate_family_never_produces_calls(tmp_path: Path) -> None:
-    # rationale recorded but never promoted past candidate
-    ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    lifecycle = LifecycleRegistry(tmp_path / "lifecycle.jsonl")
-    registry = BacktestRegistry(tmp_path / "registry.jsonl")
-    result = build_calls(
-        frame=_shocked_frame(),
-        as_of="2026-04-13",
-        equity=100_000.0,
-        regime=_regime(),
-        ledger=ledger,
-        lifecycle=lifecycle,
-        backtest_registry=registry,
-        universe_entries=_universe(["AAA"]),
-    )
-    assert result.eligible_families == ()
-
-
 def test_retired_family_never_produces_calls(tmp_path: Path) -> None:
     lifecycle, registry = _seed_paper_live(tmp_path)
     lifecycle.retire("oversold_reversion_v1", actor="human:jose", reason="falsified")
-    ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    result = build_calls(
-        frame=_shocked_frame(),
-        as_of="2026-04-13",
-        equity=100_000.0,
-        regime=_regime(),
-        ledger=ledger,
-        lifecycle=lifecycle,
-        backtest_registry=registry,
-        universe_entries=_universe(["AAA"]),
-    )
+    result = _build(tmp_path, lifecycle, registry)
     assert result.eligible_families == ()
     assert result.calls == ()
 
@@ -195,19 +147,20 @@ def test_eligible_family_without_justifying_run_id_raises(tmp_path: Path) -> Non
         "oversold_reversion_v1", "backtested", "agent:sonnet", "forged, no evidence"
     )
     lifecycle.promote_to_paper_live("oversold_reversion_v1", actor="human:jose")
-    ledger = LedgerStore(tmp_path / "ledger.jsonl")
     registry = BacktestRegistry(tmp_path / "registry.jsonl")
     with pytest.raises(CallsError, match="no justifying_run_id"):
-        build_calls(
-            frame=_shocked_frame(),
-            as_of="2026-04-13",
-            equity=100_000.0,
-            regime=_regime(),
-            ledger=ledger,
-            lifecycle=lifecycle,
-            backtest_registry=registry,
-            universe_entries=_universe(["AAA"]),
-        )
+        _build(tmp_path, lifecycle, registry)
+
+
+def test_eligible_family_without_registered_class_raises(tmp_path: Path) -> None:
+    # WI-067 review: iteration is driven by the lifecycle registry, so a
+    # paper-live family missing from FAMILY_SIGNALS must be LOUD, not invisible.
+    lifecycle = LifecycleRegistry(tmp_path / "lifecycle.jsonl")
+    lifecycle._transition("mystery_family_v1", "backtested", "agent:sonnet", "forged")
+    lifecycle.promote_to_paper_live("mystery_family_v1", actor="human:jose")
+    registry = BacktestRegistry(tmp_path / "registry.jsonl")
+    with pytest.raises(CallsError, match="no signal class registered"):
+        _build(tmp_path, lifecycle, registry)
 
 
 # ---- justified parameters actually drive the live scan --------------------
@@ -217,17 +170,7 @@ def test_signal_instantiated_with_justifying_params(tmp_path: Path) -> None:
     # k=100 is an impossibly strict threshold — if params didn't flow through,
     # the signal would use some other default and (with this fixture) still fire.
     lifecycle, registry = _seed_paper_live(tmp_path, params={"k": 100.0})
-    ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    result = build_calls(
-        frame=_shocked_frame(),
-        as_of="2026-04-13",
-        equity=100_000.0,
-        regime=_regime(),
-        ledger=ledger,
-        lifecycle=lifecycle,
-        backtest_registry=registry,
-        universe_entries=_universe(["AAA"]),
-    )
+    result = _build(tmp_path, lifecycle, registry)
     assert result.eligible_families[0].justifying_params == {"k": 100.0}
     assert result.calls == ()
     assert result.rejections == ()  # scan itself found nothing — never reached risk sizing
@@ -239,30 +182,44 @@ def test_signal_instantiated_with_justifying_params(tmp_path: Path) -> None:
 def test_accepted_call_lands_on_ledger_with_qty_and_family_exit_override(tmp_path: Path) -> None:
     lifecycle, registry = _seed_paper_live(tmp_path)
     ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    result = build_calls(
-        frame=_shocked_frame(),
-        as_of="2026-04-13",
-        equity=100_000.0,
-        regime=_regime(),
-        ledger=ledger,
-        lifecycle=lifecycle,
-        backtest_registry=registry,
-        universe_entries=_universe(["AAA"]),
-        earnings_lookup=lambda *_: NO_EARNINGS,
-    )
+    result = _build(tmp_path, lifecycle, registry, ledger=ledger)
     assert len(result.calls) == 1
     call = result.calls[0]
     assert call.rank == 1
     assert call.family == "oversold_reversion_v1"
     assert call.time_stop_sessions == 7  # family's doctrine override, not the 15-session default
-    assert "1.5" in call.profit_rule  # family's +1.5R half-take override (risk/engine.py fix)
+    assert "1.5" in call.profit_rule  # family's +1.5R half-take override
 
     entries = ledger.entries()
     assert len(entries) == 1
     assert entries[0]["id"] == call.ref_id
     assert entries[0]["qty"] == call.qty
+    assert entries[0]["as_of"] == AS_OF  # decision session recorded for expiry semantics
     assert entries[0]["exit_params"]["time_stop_sessions"] == 7
     assert entries[0]["exit_params"]["take_half_at_r"] == 1.5
+
+
+# ---- idempotency: active positions are never re-proposed --------------------
+
+
+def test_already_held_symbol_is_rejected_not_stacked(tmp_path: Path) -> None:
+    lifecycle, registry = _seed_paper_live(tmp_path)
+    ledger = LedgerStore(tmp_path / "ledger.jsonl")
+    first = _build(tmp_path, lifecycle, registry, ledger=ledger)
+    assert len(first.calls) == 1  # AAA called and appended
+
+    # same-day re-run: AAA is now a same-session pending call — never re-proposed
+    second = _build(tmp_path, lifecycle, registry, ledger=ledger)
+    assert second.calls == ()
+    assert [r.reason for r in second.rejections] == ["already_held"]
+    assert len(ledger.entries()) == 1  # NO duplicate append
+
+    # and once filled, still blocked
+    ledger.append_fill(first.calls[0].ref_id, "ord-1", first.calls[0].qty, 130.0, "filled")
+    third = _build(tmp_path, lifecycle, registry, ledger=ledger)
+    assert third.calls == ()
+    assert [r.reason for r in third.rejections] == ["already_held"]
+    assert len(ledger.entries()) == 1
 
 
 # ---- existing ledger heat can reject a new, otherwise-valid candidate -----
@@ -278,22 +235,12 @@ def test_existing_ledger_heat_rejects_new_candidate(tmp_path: Path) -> None:
         ledger.append(rec)
         ledger.append_fill(rec.id, f"ord-{i}", 100.0, 100.0, "filled")
 
-    result = build_calls(
-        frame=_shocked_frame(),
-        as_of="2026-04-13",
-        equity=100_000.0,
-        regime=_regime(),
-        ledger=ledger,
-        lifecycle=lifecycle,
-        backtest_registry=registry,
-        universe_entries=_universe(["AAA"]),
-        earnings_lookup=lambda *_: NO_EARNINGS,
-    )
+    result = _build(tmp_path, lifecycle, registry, ledger=ledger)
     assert result.calls == ()
     assert len(result.rejections) == 1
     assert result.rejections[0].reason.startswith("heat_cap:")
     assert result.no_trade_reason is not None
-    assert "candidate" in result.no_trade_reason
+    assert "heat_cap" in result.no_trade_reason
 
 
 # ---- c3: regime risk_off yields an explicit, honest no-trade result -------
@@ -302,39 +249,58 @@ def test_existing_ledger_heat_rejects_new_candidate(tmp_path: Path) -> None:
 def test_risk_off_regime_yields_no_trade_reason(tmp_path: Path) -> None:
     lifecycle, registry = _seed_paper_live(tmp_path)
     ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    result = build_calls(
-        frame=_shocked_frame(),
-        as_of="2026-04-13",
-        equity=100_000.0,
-        regime=_regime("risk_off"),
-        ledger=ledger,
-        lifecycle=lifecycle,
-        backtest_registry=registry,
-        universe_entries=_universe(["AAA"]),
-        earnings_lookup=lambda *_: NO_EARNINGS,
-    )
+    result = _build(tmp_path, lifecycle, registry, ledger=ledger, regime=_regime("risk_off"))
     assert result.calls == ()
     assert result.no_trade_reason is not None
-    assert "risk_off" in result.no_trade_reason
+    assert "regime_risk_off" in result.no_trade_reason
     assert ledger.entries() == []  # a rejected proposal must never reach the ledger
 
 
-# ---- open-position reconstruction ------------------------------------------
+def test_no_trade_reason_is_honest_about_zero_proposals() -> None:
+    # WI-067 review: zero proposals must never be reported as "gates blocked
+    # entries" — the gates never fired.
+    assert "no qualifying setups" in _no_trade_reason(0, [])
+    gated = _no_trade_reason(2, [RenderedRejection("A", "f", "regime_risk_off", "d")] * 2)
+    assert "regime_risk_off (2)" in gated and "2 candidate(s)" in gated
 
 
-def test_open_positions_from_ledger_skips_unfilled_and_uses_original_stop(
-    tmp_path: Path,
-) -> None:
+# ---- active-position reconstruction ------------------------------------------
+
+
+def test_active_positions_pending_semantics(tmp_path: Path) -> None:
     ledger = LedgerStore(tmp_path / "ledger.jsonl")
     filled = _rec(symbol="FILLED")
     ledger.append(filled)
     ledger.append_fill(filled.id, "ord-1", 100.0, 100.0, "filled")
-    unfilled = _rec(symbol="UNFILLED")
-    ledger.append(unfilled)
+    ledger.append(_rec(symbol="TODAY_PENDING"))  # same-session, will execute this run
+    ledger.append(_rec(symbol="STALE_PENDING", as_of="2026-04-10"))  # expired, never fills
 
-    positions = _open_positions_from_ledger(ledger)
-    assert [p.symbol for p in positions] == ["FILLED"]
-    assert positions[0].current_stop_price == 92.5  # original stop, no trailing-stop tracking yet
+    positions = _active_positions(ledger, AS_OF)
+    assert sorted(p.symbol for p in positions) == ["FILLED", "TODAY_PENDING"]
+    by_symbol = {p.symbol: p for p in positions}
+    assert by_symbol["FILLED"].current_stop_price == 92.5  # original stop, no trailing yet
+
+
+def test_active_positions_follow_supersede_chains(tmp_path: Path) -> None:
+    # WI-067 review: a filled-then-corrected position must keep its heat.
+    ledger = LedgerStore(tmp_path / "ledger.jsonl")
+    original = _rec(symbol="CORRECTED")
+    ledger.append(original)
+    ledger.append_fill(original.id, "ord-1", 100.0, 100.0, "filled")
+    ledger.append(_rec(symbol="CORRECTED", stop_price=93.0, supersedes=original.id))
+
+    positions = _active_positions(ledger, AS_OF)
+    assert [p.symbol for p in positions] == ["CORRECTED"]
+    assert positions[0].current_stop_price == 93.0  # the corrected stop
+
+
+def test_active_positions_exclude_terminally_unfilled_orders(tmp_path: Path) -> None:
+    ledger = LedgerStore(tmp_path / "ledger.jsonl")
+    rec = _rec(symbol="CANCELED")
+    ledger.append(rec)
+    ledger.append_fill(rec.id, "ord-1", 100.0, None, "accepted")  # submitted...
+    ledger.append_fill(rec.id, "ord-1", 0.0, None, "canceled")  # ...died at the venue
+    assert _active_positions(ledger, AS_OF) == []
 
 
 # ---- deterministic ranking --------------------------------------------------

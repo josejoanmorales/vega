@@ -7,15 +7,14 @@ Run: uv run python -m vega.risk
 
 from __future__ import annotations
 
-import os
 from datetime import date
-from typing import cast
 
 import duckdb
 import pandas as pd
 from dotenv import load_dotenv
 
 from vega.data import snapshot
+from vega.execution.executor import live_account_equity
 from vega.regime.calendar import macro_events_within
 from vega.regime.inputs import fetch_fear_greed, fetch_vix
 from vega.regime.regime import compute_regime
@@ -25,19 +24,6 @@ from vega.risk.heat import OpenPositionHeat
 from vega.risk.types import Rejection, SizedProposal
 
 CANDIDATES = [("AAPL", "equity"), ("BTC", "crypto")]
-
-
-def _live_equity() -> float:
-    from alpaca.trading.client import TradingClient
-    from alpaca.trading.models import TradeAccount
-
-    client = TradingClient(
-        os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"], paper=True
-    )
-    account = cast(TradeAccount, client.get_account())
-    if account.equity is None:
-        raise RuntimeError("Alpaca paper account returned no equity value")
-    return float(account.equity)
 
 
 def main() -> None:
@@ -54,7 +40,7 @@ def main() -> None:
     finally:
         con.close()
 
-    equity = _live_equity()
+    equity = live_account_equity()
     vix = fetch_vix(days=300)
     fng = fetch_fear_greed(limit=30)
     yf_frame = frame[frame["source"] == "yfinance"]

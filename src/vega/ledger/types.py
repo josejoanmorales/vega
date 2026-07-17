@@ -50,6 +50,10 @@ class Recommendation:
     # schema growth, not a contract change).
     exit_params: dict[str, Any] | None = None
     qty: float | None = None
+    # Decision session (WI-067, additive): the store date whose close produced this
+    # call. Execution honors the backtest's T+1-open fill model — a rec whose as_of
+    # is no longer the current session must EXPIRE (surfaced, never late-filled).
+    as_of: str | None = None
 
     def __post_init__(self) -> None:
         _require(bool(self.symbol), "symbol is required")
@@ -70,3 +74,5 @@ class Recommendation:
             )
         if self.qty is not None:
             _require(self.qty > 0, "qty must be positive when provided")
+        if self.as_of is not None:
+            date.fromisoformat(self.as_of)  # raises on a malformed decision session

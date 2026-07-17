@@ -1,32 +1,7 @@
-import pandas as pd
-
+from conftest import make_ohlc_frame as _ohlc_frame
+from conftest import steep_uptrend_then_shock as _steep_uptrend_then_shock
 from vega.backtest.market_view import MarketView
 from vega.signals.oversold_reversion import OversoldReversionSignal
-
-
-def _ohlc_frame(closes: list[float], shocked: set[int], symbol: str = "AAA") -> pd.DataFrame:
-    """Raw OHLC around each close; wider (more volatile) range on shocked indices."""
-    dates = pd.date_range("2026-01-01", periods=len(closes), freq="D").strftime("%Y-%m-%d")
-    rows = []
-    for i, (d, c) in enumerate(zip(dates, closes, strict=True)):
-        spread = 5.0 if i in shocked else 2.0
-        rows.append(
-            {
-                "symbol": symbol,
-                "date": d,
-                "adj_close": c,
-                "close": c,
-                "high": c + spread,
-                "low": c - spread,
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def _steep_uptrend_then_shock(drop_total: float) -> list[float]:
-    base = [100.0 + i * 1.0 for i in range(100)]  # steep rising trend, SMA100 lags well behind
-    peak = base[-1]
-    return base + [peak - drop_total / 3, peak - 2 * drop_total / 3, peak - drop_total]
 
 
 def test_fires_on_a_large_shock_while_still_above_sma100() -> None:

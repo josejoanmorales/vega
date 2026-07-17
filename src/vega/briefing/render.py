@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
+from vega.briefing.calls import RenderedCall, RenderedRejection
 from vega.briefing.engine import BriefingData
 from vega.common.paths import DATA_ROOT
 from vega.data.types import SnapshotConflictError
@@ -24,7 +24,7 @@ def _movers_table(movers: pd.DataFrame) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _calls_table(calls: tuple[Any, ...]) -> str:
+def _calls_table(calls: tuple[RenderedCall, ...]) -> str:
     lines = [
         "| rank | symbol | family:version | thesis | qty | entry | stop | worst-case | "
         "time stop | profit rule | invalidation | heat (total) |",
@@ -41,7 +41,7 @@ def _calls_table(calls: tuple[Any, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _rejections_table(rejections: tuple[Any, ...]) -> str:
+def _rejections_table(rejections: tuple[RenderedRejection, ...]) -> str:
     lines = ["| symbol | family | reason | detail |", "|---|---|---|---|"]
     lines += [f"| {r.symbol} | {r.family} | {r.reason} | {r.detail} |" for r in rejections]
     return "\n".join(lines) + "\n"
@@ -77,7 +77,14 @@ def render(data: BriefingData) -> str:
             f"- {f['at']} `{f['symbol']}` (rec {f['ref_id'][:8]}): {f['error']}"
             for f in data.failures
         ]
-    if data.eligible_families:
+    if data.calls_error is not None:
+        parts += [
+            "",
+            "## Ranked calls",
+            "",
+            f"⚠ **Ranked calls unavailable this run** — {data.calls_error}",
+        ]
+    elif data.eligible_families:
         parts += ["", "## Ranked calls", ""]
         if data.calls:
             parts.append(_calls_table(data.calls))

@@ -16,6 +16,17 @@ PROFIT_TAKE_HALF_AT_R = 2.0
 PROFIT_TRAIL_ATR_MULT = 2.5
 DEFAULT_TIME_STOP_SESSIONS = 15
 
+# Per-family override bands (WI-067 review): a signal family may tune its exit
+# spec ONLY within these doctrine bands — the live risk engine validates every
+# override against them, so a typo'd or out-of-doctrine exit spec is rejected
+# at proposal time instead of becoming a binding ledger contract. The 5-20
+# session band is the one STRATEGY.md's swing scope has always implied (and
+# family docstrings already cite); the others bracket the doctrine defaults.
+TIME_STOP_SESSIONS_BAND = (5, 20)
+PROFIT_TAKE_HALF_AT_R_BAND = (1.0, 3.0)
+STOP_ATR_MULT_BAND = (1.5, 3.0)
+PROFIT_TRAIL_ATR_MULT_BAND = (1.5, 4.0)
+
 # Approximate trading-sessions -> calendar-days conversion for derived display
 # dates (7 calendar days per 5 sessions; crypto trades 7/7 but we keep one
 # conservative conversion for the human-readable ledger field).

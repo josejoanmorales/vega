@@ -168,8 +168,41 @@ def test_proposal_round_trips_into_a_valid_ledger_recommendation() -> None:
     )
     assert rec.qty == result.qty
     assert rec.horizon_days == result.time_stop_sessions
+    assert rec.as_of == "2026-06-20"  # decision session — expiry semantics downstream
     assert rec.exit_params is not None
     assert rec.exit_params["time_stop_sessions"] == result.time_stop_sessions  # canonical
     assert rec.exit_params["stop_atr_mult"] == 2.0
     # the ledger date string is a DERIVED display value: sessions * 7/5 calendar days
     assert rec.time_stop_date == "2026-07-11"  # 2026-06-20 + ceil(15 * 1.4) = 21 days
+
+
+def test_all_four_exit_overrides_flow_into_the_spec() -> None:
+    # WI-067 review: propose() must honor the SAME four per-family exit params
+    # the backtester honors — a subset silently re-created live/backtest drift.
+    result = _propose(
+        time_stop_sessions=7,
+        profit_take_half_at_r=1.5,
+        stop_atr_mult=2.5,
+        profit_trail_atr_mult=3.0,
+    )
+    assert isinstance(result, SizedProposal)
+    atr = result.exit_params["atr_at_proposal"]
+    assert result.stop_price == pytest.approx(100.0 - 2.5 * atr)
+    assert result.exit_params["stop_atr_mult"] == 2.5
+    assert result.exit_params["trail_atr_mult"] == 3.0
+    assert result.exit_params["take_half_at_r"] == 1.5
+    assert result.exit_params["time_stop_sessions"] == 7
+    assert "+1.5R" in result.profit_rule_text and "3xATR" in result.profit_rule_text
+
+
+def test_out_of_doctrine_exit_overrides_are_rejected() -> None:
+    # A typo'd exit spec must never become a binding ledger contract.
+    for override in (
+        {"time_stop_sessions": 45},
+        {"profit_take_half_at_r": 0.15},
+        {"stop_atr_mult": 0.5},
+        {"profit_trail_atr_mult": 9.0},
+    ):
+        result = _propose(**override)
+        assert isinstance(result, Rejection)
+        assert result.reason == "exit_spec_out_of_doctrine"

@@ -114,6 +114,15 @@ def test_ranked_calls_table_renders_with_rejections() -> None:
     assert "### Considered and rejected" in out and "MSFT" in out and "earnings_unknown" in out
 
 
+def test_calls_error_is_published_not_just_printed() -> None:
+    # WI-067 review: a day the call engine failed must be distinguishable on
+    # the published record from "no eligible families".
+    data = replace(_data(), calls_error="ranked-calls generation failed (boom)")
+    out = render(data)
+    assert "## Ranked calls" in out
+    assert "Ranked calls unavailable this run" in out and "boom" in out
+
+
 def test_briefing_write_once(tmp_path: Path) -> None:
     p1 = write_briefing(_data(), root=tmp_path)
     p2 = write_briefing(_data(), root=tmp_path)
