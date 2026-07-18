@@ -12,12 +12,6 @@ from vega.lifecycle.rationale import RationaleRegistry
 DATES = list(pd.date_range("2026-03-01", periods=150, freq="D").strftime("%Y-%m-%d"))
 
 
-def _calendar_frame(dates: list[str]) -> pd.DataFrame:
-    return pd.DataFrame(
-        [{"symbol": "SPY", "date": d, "close": 100.0, "adj_close": 100.0} for d in dates]
-    )
-
-
 def _rec(**overrides: object) -> Recommendation:
     base: dict[str, object] = {
         "symbol": "AAA",
@@ -103,8 +97,8 @@ def test_groups_trades_by_family_parsed_from_attribution(tmp_path: Path) -> None
     ledger = LedgerStore(tmp_path / "l.jsonl")
     _seed_closed_trade(ledger, 0, 100.0, 105.0, family="oversold_reversion_v1")
     _seed_closed_trade(ledger, 1, 100.0, 95.0, family="trend_pullback_v1")
-    frame = _calendar_frame(DATES[:5])
-    by_family = closed_round_trips(ledger, frame)
+    calendar = DATES[:5]
+    by_family = closed_round_trips(ledger, calendar)
     assert set(by_family) == {"oversold_reversion_v1", "trend_pullback_v1"}
     assert len(by_family["oversold_reversion_v1"]) == 1
 
@@ -112,8 +106,8 @@ def test_groups_trades_by_family_parsed_from_attribution(tmp_path: Path) -> None
 def test_entry_and_exit_dates_are_store_sessions_not_timestamps(tmp_path: Path) -> None:
     ledger = LedgerStore(tmp_path / "l.jsonl")
     _seed_closed_trade(ledger, 0, 100.0, 105.0)
-    frame = _calendar_frame(DATES[:5])
-    (trade,) = closed_round_trips(ledger, frame)["oversold_reversion_v1"]
+    calendar = DATES[:5]
+    (trade,) = closed_round_trips(ledger, calendar)["oversold_reversion_v1"]
     assert trade.entry_date == DATES[1]  # first session after rec.as_of (DATES[0])
     assert trade.exit_date == DATES[1]  # the sell fill's tagged session
 
@@ -136,8 +130,8 @@ def test_partial_then_time_stop_yields_two_trade_rows(tmp_path: Path) -> None:
     ledger.append_fill(
         rec.id, "sell-2", 5.0, 98.0, "filled", side="sell", reason="time_stop", session=DATES[5]
     )
-    frame = _calendar_frame(DATES[:7])
-    (trades,) = closed_round_trips(ledger, frame).values()
+    calendar = DATES[:7]
+    (trades,) = closed_round_trips(ledger, calendar).values()
     assert len(trades) == 2
     assert {t.qty for t in trades} == {5.0}
     assert {t.exit_price for t in trades} == {115.0, 98.0}
@@ -149,8 +143,8 @@ def test_pending_and_unpriced_positions_produce_no_trades(tmp_path: Path) -> Non
     unpriced = _rec(symbol="BBB", as_of=DATES[0])
     ledger.append(unpriced)
     ledger.append_fill(unpriced.id, "buy-2", 10.0, None, "accepted")  # entry not yet reconciled
-    frame = _calendar_frame(DATES[:5])
-    assert closed_round_trips(ledger, frame) == {}
+    calendar = DATES[:5]
+    assert closed_round_trips(ledger, calendar) == {}
 
 
 # ---- check_and_apply_demotions ----------------------------------------------
@@ -161,8 +155,8 @@ def test_insufficient_sample_takes_no_action(tmp_path: Path) -> None:
     ledger = LedgerStore(tmp_path / "ledger.jsonl")
     for i in range(5):  # below MIN_TRADES_FOR_VERDICT
         _seed_closed_trade(ledger, i, 100.0, 95.0)
-    frame = _calendar_frame(DATES[:40])
-    outcomes = check_and_apply_demotions(ledger, frame, lifecycle, registry, DATES[10])
+    calendar = DATES[:40]
+    outcomes = check_and_apply_demotions(ledger, calendar, lifecycle, registry, DATES[10])
     assert len(outcomes) == 1
     assert outcomes[0].verdict.should_demote is False
     assert "insufficient_sample" in outcomes[0].verdict.reason
@@ -176,9 +170,9 @@ def test_consistent_losses_trigger_automatic_demotion(tmp_path: Path) -> None:
         # alternating losses -> consistently negative, breaches a positive band
         exit_price = 100.0 - (1.0 if i % 2 == 0 else 0.5)
         _seed_closed_trade(ledger, i, 100.0, exit_price)
-    frame = _calendar_frame(DATES[:40])
+    calendar = DATES[:40]
     outcomes = check_and_apply_demotions(
-        ledger, frame, lifecycle, registry, DATES[36], actor="agent:exit-monitor"
+        ledger, calendar, lifecycle, registry, DATES[36], actor="agent:exit-monitor"
     )
     assert len(outcomes) == 1
     assert outcomes[0].verdict.should_demote is True
@@ -194,8 +188,8 @@ def test_non_eligible_families_are_never_evaluated(tmp_path: Path) -> None:
     registry = BacktestRegistry(tmp_path / "registry.jsonl")
     # never promoted past candidate -- has a rationale but no lifecycle transition
     ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    frame = _calendar_frame(DATES[:5])
-    assert check_and_apply_demotions(ledger, frame, lifecycle, registry, DATES[3]) == []
+    calendar = DATES[:5]
+    assert check_and_apply_demotions(ledger, calendar, lifecycle, registry, DATES[3]) == []
 
 
 def test_sleeve_split_demotes_the_family_only_once(tmp_path: Path) -> None:
@@ -207,10 +201,10 @@ def test_sleeve_split_demotes_the_family_only_once(tmp_path: Path) -> None:
     for i in range(35, 70):
         exit_price = 100.0 - (1.0 if i % 2 == 0 else 0.5)
         _seed_closed_trade(ledger, i, 100.0, exit_price, asset_class="crypto")
-    frame = _calendar_frame(DATES[:75])
+    calendar = DATES[:75]
     # both sleeves breach -> exactly one demote() call, no LifecycleError from a
     # second demote on an already-demoted family
-    outcomes = check_and_apply_demotions(ledger, frame, lifecycle, registry, DATES[72])
+    outcomes = check_and_apply_demotions(ledger, calendar, lifecycle, registry, DATES[72])
     assert {o.asset_class for o in outcomes} == {"equity", "crypto"}
     assert all(o.verdict.should_demote for o in outcomes)
     assert lifecycle.current_state("oversold_reversion_v1") == "backtested"

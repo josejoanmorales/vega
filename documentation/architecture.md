@@ -400,6 +400,57 @@ promotion said it would.
   `insufficient_sample` (fewer than 30 real live trades exist yet — correct, no false
   demotion). 253 tests (was 221), verify.sh green.
 
+### WI-087 strongest-model review fixes (10 findings, all shipped)
+
+The review's headline: the exit loop had never completed a full round trip in production,
+and that unexercised path hid a chain that would have killed the feature's purpose. All
+fixed at this commit:
+
+- **Reconciliation identity (#1)**: `reconcile_fills` now propagates `side`/`reason`/
+  `session` onto the records it appends — previously every pre-market SELL's
+  reconciliation was re-labeled a buy, corrupting reconstruction (half-open positions read
+  fully closed; canceled sells erased whole positions and re-enabled double-buys) and
+  starving `closed_round_trips` of every round trip, leaving auto-demotion permanently at
+  `insufficient_sample`.
+- **Per-order fill resolution (#9)**: `latest_with_all_fills` resolves records per
+  order_id (priced wins; otherwise latest knowledge; identity fields merged; `at` stays
+  anchored to submission) so an acceptance plus its reconciliation is ONE fill — qty sums
+  can never double-count — and pre-fix mislabeled records are healed on read.
+- **In-flight sells (#2)**: an accepted-but-unpriced sell no longer reduces the position.
+  `remaining_qty` counts only PRICED sells (heat stays conservative); a new
+  `in_flight_sell_qty` keeps exit decisions from re-selling qty already covered by a
+  working order.
+- **Session-clock origin (#3)**: `entry_session_for` anchors to the chain-ORIGIN's
+  `as_of` (`LedgerStore` now annotates recs with `origin_as_of`), so a supersede
+  correction can no longer reset a position's time-stop clock — while the correction's
+  own stop still governs.
+- **Confirmed entries only (#4)**: `entry_confirmed` distinguishes a priced buy from a
+  presumed acceptance — presumed positions reserve heat (conservative) but can never arm
+  the SELL path (selling never-bought shares was the unsafe direction).
+- **Track-record calendar (#5)**: `closed_round_trips` takes the FULL store session
+  calendar (`full_session_calendar()`), never the 220-day signal frame — old entries no
+  longer clamp to a window floor and old exits no longer vanish from PnL exactly when the
+  30-trade demotion gate opens; legacy `as_of=None` recs (CDW/CSCO) now enter the track
+  record via the same shared session fallback.
+- **Exits publish unconditionally (#6)**: `__main__` attaches executed exits to the
+  briefing THE MOMENT they run, before demotions or entry generation — a later failure
+  can no longer place sells the published record omits.
+- **Stale-store semantics (#7)**: exit monitoring now RUNS on a stale store (risk-reducing;
+  a late stop beats an unmanaged one) — only new entries require fresh data; an
+  unreachable Alpaca publishes how many open positions went unmanaged that run.
+- **Structural data gaps fail loudly (#8)**: a held, confirmed position whose symbol has
+  no bars in the monitoring frame raises `ExitMonitorGapError` (the first crypto
+  promotion would otherwise have run with stops silently never evaluated).
+- **R basis documented (#10)**: live R = fill price minus the PUBLISHED ledger stop — the
+  binding contract — which diverges from simulate.py's fill-derived stop with the
+  overnight gap; now a stated assumption in the module docstring, with the structural fix
+  (one shared trigger function) parked on WI-084.
+
+Live re-run proof after the fixes: legacy CDW/CSCO fills resolve to single priced
+records, ALL/C remain honest unpriced acceptances (`entry_confirmed=False`, unsellable),
+zero duplicate appends, demotion clean over the full calendar. 259 tests (was 253),
+verify.sh green.
+
 ## Verification gate
 
 `scripts/verify.sh` — executed by Caral's daily-build runner; non-zero exit = failed build.

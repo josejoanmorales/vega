@@ -429,3 +429,125 @@ def test_trading_calendar_pools_all_symbols() -> None:
         ]
     )
     assert trading_calendar(frame) == ["2026-01-01", "2026-01-02", "2026-01-03"]
+
+
+# ---- WI-087 review-fix regressions ------------------------------------------
+
+
+def test_review1_reconcile_preserves_sell_identity(tmp_path: Path) -> None:
+    # Review #1: reconciled records must keep side/reason/session — dropping
+    # them re-labeled every reconciled SELL as a buy.
+    from vega.execution.executor import OrderResult as OR
+    from vega.execution.executor import reconcile_fills
+
+    ledger, rec = _open_position(tmp_path)
+    ledger.append_fill(
+        rec.id,
+        "ord-s1",
+        5.0,
+        None,
+        "accepted",
+        side="sell",
+        reason="profit_partial",
+        session=DATES[2],
+    )
+
+    class _B:
+        def order_status(self, order_id: str) -> OR:
+            return OR(order_id, "AAA", 5.0, 116.2, "filled")
+
+    assert reconcile_fills(ledger, _B()) == 1
+    resolved = ledger.latest_with_all_fills()[0][1]
+    sell = next(f for f in resolved if f.get("side") == "sell")
+    assert sell["price"] == 116.2
+    assert sell["reason"] == "profit_partial" and sell["session"] == DATES[2]
+
+
+def test_review9_acceptance_and_reconciliation_are_one_order(tmp_path: Path) -> None:
+    # Review #9: same order_id resolves to ONE fill — sold_qty must not
+    # double-count an acceptance plus its priced reconciliation.
+    ledger, rec = _open_position(tmp_path)
+    ledger.append_fill(
+        rec.id,
+        "ord-s1",
+        5.0,
+        None,
+        "accepted",
+        side="sell",
+        reason="profit_partial",
+        session=DATES[2],
+    )
+    ledger.append_fill(
+        rec.id,
+        "ord-s1",
+        5.0,
+        116.2,
+        "filled",
+        side="sell",
+        reason="profit_partial",
+        session=DATES[2],
+    )
+    (pos,) = reconstruct_positions(ledger, _flat_calendar(DATES[:4]), DATES[3])
+    assert pos.remaining_qty == 5.0  # 10 entry - 5 sold ONCE
+    assert pos.took_partial is True
+
+
+def test_review2_inflight_sell_keeps_heat_but_blocks_resell(tmp_path: Path) -> None:
+    # Review #2: an accepted-but-unpriced sell keeps its shares in heat
+    # (remaining unchanged — conservative) while exit evaluation must not
+    # re-sell the covered qty.
+    ledger, rec = _open_position(tmp_path)
+    ledger.append_fill(
+        rec.id,
+        "ord-s1",
+        10.0,
+        None,
+        "accepted",
+        side="sell",
+        reason="time_stop",
+        session=DATES[2],
+    )
+    frame = _bars([(d, 50.0, 51.0, 49.0, 50.0) for d in DATES[:4]])  # deep below stop
+    (pos,) = reconstruct_positions(ledger, frame, DATES[3])
+    assert pos.remaining_qty == 10.0  # unpriced sell does NOT reduce the position
+    assert pos.in_flight_sell_qty == 10.0
+    assert evaluate_exits(ledger, frame, DATES[3]) == []  # nothing left to re-sell
+
+
+def test_review3_supersede_correction_does_not_reset_session_clock(tmp_path: Path) -> None:
+    # Review #3: the clock anchors to the chain ORIGIN's as_of, not the
+    # surviving correction's.
+    ledger = LedgerStore(tmp_path / "l.jsonl")
+    original = _rec(as_of=DATES[0])
+    ledger.append(original)
+    ledger.append_fill(original.id, "ord-1", 10.0, ENTRY_PRICE, "filled")
+    ledger.append(_rec(as_of=DATES[3], stop_price=91.0, supersedes=original.id))
+    (pos,) = reconstruct_positions(ledger, _flat_calendar(DATES[:5]), DATES[4])
+    assert pos.entry_session == DATES[1]  # from the ORIGIN, not the correction
+    assert pos.sessions_held == 3
+    assert pos.current_stop_price == 91.0  # the corrected stop still governs
+
+
+def test_review4_unconfirmed_entry_never_sells(tmp_path: Path) -> None:
+    # Review #4: an accepted-but-unpriced buy reserves heat but must never
+    # arm the sell path — even when its presumed bar breaches the stop.
+    ledger = LedgerStore(tmp_path / "l.jsonl")
+    rec = _rec(as_of=DATES[0])
+    ledger.append(rec)
+    ledger.append_fill(rec.id, "ord-1", 10.0, None, "accepted")  # never priced
+    frame = _bars([(d, 50.0, 51.0, 49.0, 50.0) for d in DATES[:4]])  # deep below stop
+    (pos,) = reconstruct_positions(ledger, frame, DATES[3])
+    assert pos.entry_confirmed is False
+    assert pos.remaining_qty == 10.0  # heat still reserved
+    assert evaluate_exits(ledger, frame, DATES[3]) == []
+
+
+def test_review8_missing_bars_fail_loudly(tmp_path: Path) -> None:
+    # Review #8: a held, confirmed position whose symbol has NO bars in the
+    # monitoring frame is a structural gap — raise, never silently skip stops.
+    from vega.execution.exits import ExitMonitorGapError
+
+    ledger, rec = _open_position(tmp_path)  # position in AAA
+    frame = _flat_calendar(DATES[:4], symbol="OTHER")  # AAA absent entirely
+    with pytest.raises(ExitMonitorGapError, match="AAA"):
+        evaluate_exits(ledger, frame, DATES[3])

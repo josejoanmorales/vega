@@ -6,20 +6,44 @@ tested against synthetic data for, awaiting real exit fills.
 One `LiveTrade` row per exit LOT (a partial-take followed later by a
 time-stop exit produces two rows for one position) — `LiveTrade` is
 single-exit by design, matching `TradeRecord`'s per-trade shape.
+
+Calendar contract (WI-087 review #5): the session calendar here must span the
+FULL live history — every session from the oldest position's entry through
+today — never the ~220-day signal-scan frame. A windowed calendar silently
+clamps old entries to its floor and drops pre-floor exits from PnL, corrupting
+the live Sharpe exactly when the 30-trade demotion gate opens. Callers load it
+via `full_session_calendar()` (the whole store) or supply an equivalent.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
-import pandas as pd
+import duckdb
 
 from vega.backtest.live_metrics import LiveTrade
 from vega.backtest.registry import BacktestRegistry
-from vega.execution.exits import trading_calendar
+from vega.data import snapshot
+from vega.execution.exits import entry_session_for
 from vega.ledger.store import LedgerStore
 from vega.lifecycle.demotion import DemotionVerdict, check_auto_demotion
 from vega.lifecycle.lifecycle import LifecycleRegistry, is_eligible_state
+
+
+def full_session_calendar(root: Path = snapshot.DATA_ROOT) -> list[str]:
+    """Every yfinance session in the ENTIRE store, sorted — the live track
+    record's time axis. Deliberately unwindowed: it must cover the oldest
+    round trip forever (duckdb-connect boilerplate consolidation is parked on
+    WI-084)."""
+    con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT date FROM bars WHERE source = 'yfinance' ORDER BY date"
+        ).fetchall()
+    finally:
+        con.close()
+    return [str(r[0]) for r in rows]
 
 
 def _family_of(rec: dict[str, object]) -> str:
@@ -28,12 +52,16 @@ def _family_of(rec: dict[str, object]) -> str:
     return first.split(":")[0] if first else "unknown"
 
 
-def closed_round_trips(ledger: LedgerStore, frame: pd.DataFrame) -> dict[str, list[LiveTrade]]:
+def closed_round_trips(ledger: LedgerStore, calendar: list[str]) -> dict[str, list[LiveTrade]]:
     """family -> every realized exit lot, across all positions. `entry_date`/
     `exit_date` are STORE SESSIONS (never wall-clock timestamps) — the same
     grid `live_sharpe` samples against, so live and backtest Sharpe are
-    computed over comparable calendars."""
-    calendar = trading_calendar(frame)
+    computed over comparable calendars. Entry sessions come from the shared
+    `entry_session_for` (chain-origin `as_of`, with the legacy first-buy-fill
+    fallback — WI-087 review #5: skipping `as_of=None` recs silently excluded
+    the two real pre-`as_of` production positions from the track record
+    forever)."""
+    latest_session = calendar[-1] if calendar else ""
     trades_by_family: dict[str, list[LiveTrade]] = {}
     for rec, fills in ledger.latest_with_all_fills():
         if rec["direction"] != "long":
@@ -42,13 +70,9 @@ def closed_round_trips(ledger: LedgerStore, frame: pd.DataFrame) -> dict[str, li
         if not buy_fills or buy_fills[-1].get("price") is None:
             continue
         entry_price = float(buy_fills[-1]["price"])
-        rec_as_of = rec.get("as_of")
-        if rec_as_of is None:
+        entry_session = entry_session_for(rec, buy_fills, calendar, latest_session)
+        if entry_session is None:
             continue
-        later = [d for d in calendar if d > rec_as_of]
-        if not later:
-            continue
-        entry_session = later[0]
         sell_fills = [f for f in fills if f.get("side") == "sell" and f.get("price") is not None]
         if not sell_fills:
             continue
@@ -80,7 +104,7 @@ class DemotionOutcome:
 
 def check_and_apply_demotions(
     ledger: LedgerStore,
-    frame: pd.DataFrame,
+    calendar: list[str],
     lifecycle: LifecycleRegistry,
     backtest_registry: BacktestRegistry,
     as_of: str,
@@ -89,12 +113,12 @@ def check_and_apply_demotions(
     """Evaluate every paper-live+ family's real live track record against its
     justifying backtest band, and demote (agent-legal, `automatic=True` — the
     lifecycle contract requires only PROMOTION to be human-gated) the moment
-    the evidence says so. A family trading more than one asset-class sleeve is
-    evaluated per sleeve (`live_sharpe`'s own contract), demoted at most once
-    per run even if multiple sleeves qualify (a second `demote()` call on an
-    already-demoted family would raise — state changed under it)."""
-    trades_by_family = closed_round_trips(ledger, frame)
-    calendar = trading_calendar(frame)
+    the evidence says so. `calendar` must be the FULL live-history session
+    grid (see module docstring). A family trading more than one asset-class
+    sleeve is evaluated per sleeve (`live_sharpe`'s own contract), demoted at
+    most once per run even if multiple sleeves qualify (a second `demote()`
+    call on an already-demoted family would raise — state changed under it)."""
+    trades_by_family = closed_round_trips(ledger, calendar)
     session_dates = [d for d in calendar if d <= as_of]
 
     outcomes: list[DemotionOutcome] = []

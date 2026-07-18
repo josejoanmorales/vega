@@ -189,12 +189,26 @@ def reconcile_fills(ledger: LedgerStore, backend: TradingBackend) -> int:
             result = backend.order_status(order_id)
         except Exception:  # noqa: BLE001, S112 — best-effort; unresolved records retry next run
             continue
+        # The reconciliation record must carry the SAME identity as the
+        # acceptance it resolves (WI-087 review finding #1: dropping side/
+        # reason/session re-labeled every reconciled SELL as a buy, corrupting
+        # reconstruction and silently starving auto-demotion of round trips).
+        identity = {
+            "side": fill.get("side", "buy"),
+            "reason": fill.get("reason"),
+            "session": fill.get("session"),
+        }
         if result.filled_avg_price is not None:
             ledger.append_fill(
-                fill["ref_id"], order_id, result.qty, result.filled_avg_price, result.status
+                fill["ref_id"],
+                order_id,
+                result.qty,
+                result.filled_avg_price,
+                result.status,
+                **identity,
             )
         elif result.status in TERMINAL_UNFILLED_STATUSES:
-            ledger.append_fill(fill["ref_id"], order_id, 0.0, None, result.status)
+            ledger.append_fill(fill["ref_id"], order_id, 0.0, None, result.status, **identity)
         else:
             continue  # still working at the venue — try again next run
         resolved_orders.add(order_id)

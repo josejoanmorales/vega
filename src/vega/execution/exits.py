@@ -16,6 +16,16 @@ State is never persisted separately from the ledger: every position's current
 stop (trailed or not), remaining qty, and sessions-held are DERIVED fresh each
 run from (entry fill, exit fills, exit_params, the clean store's session
 calendar) — a pure function, safe to re-run any number of times.
+
+STATED ASSUMPTION — R basis (WI-087 review #10): live R = actual fill price
+minus the PUBLISHED ledger stop, so the profit target moves with the overnight
+entry gap relative to the backtest (simulate.py re-derives its stop FROM the
+fill, so its R is always stop_mult*ATR). This is deliberate: the published
+stop is the binding contract the briefing printed and the stop the monitor
+enforces — exits must be self-consistent with the position's REAL risk as
+executed, even where that diverges from the simulated fill model. The
+structural fix (one shared trigger function for simulate.py and this module)
+is parked on the WI-084 cleanup item.
 """
 
 from __future__ import annotations
@@ -59,7 +69,7 @@ class OpenPosition:
     symbol: str
     asset_class: str
     entry_price: float
-    remaining_qty: float
+    remaining_qty: float  # net of PRICED sells only — in-flight sells still count as held
     original_stop_price: float
     current_stop_price: float  # == original unless a partial has trailed it
     entry_session: str | None  # None only when is_pending
@@ -75,6 +85,16 @@ class OpenPosition:
     signal_attribution: tuple[str, ...]
     spy_correlation: float | None
     is_pending: bool
+    # WI-087 review findings #2/#4:
+    # entry_confirmed — the buy has a real price. An accepted-but-unpriced buy
+    # is presumed filled for HEAT (overstating = conservative) but must never
+    # arm the SELL path (selling shares that may never have been bought is the
+    # unsafe direction).
+    entry_confirmed: bool = True
+    # in_flight_sell_qty — submitted-but-unpriced sell qty. It does NOT reduce
+    # remaining (the shares are ours until a priced fill confirms otherwise —
+    # heat stays conservative) but exit decisions must not re-sell it.
+    in_flight_sell_qty: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -107,6 +127,33 @@ def trading_calendar(frame: pd.DataFrame) -> list[str]:
     never used for this — one delisted-adjacent bar must not stall or shift
     another symbol's time stop."""
     return sorted({str(d) for d in frame["date"].unique()})
+
+
+def entry_session_for(
+    rec: dict[str, Any],
+    buy_fills: list[dict[str, Any]],
+    calendar: list[str],
+    as_of: str,
+) -> str | None:
+    """The session a position's clock starts on: the first session AFTER the
+    chain-ORIGIN decision (`origin_as_of` — the surviving rec's own `as_of`
+    would let a supersede correction appended days later reset the time-stop
+    clock, WI-087 review #3). Legacy records predating the `as_of` field
+    (WI-067's first live smoke) fall back to the ORIGINAL (first) buy fill's
+    timestamp date — never a later reconciliation record, whose wall-clock
+    stamp can land past the calendar's range and silently exclude the
+    position from every check. Returns None when the entry session hasn't
+    happened yet (or can't be derived). The ONE definition — exit
+    reconstruction and live-trade round-trips both use it (WI-087 review #5)."""
+    origin_as_of = rec.get("origin_as_of") or rec.get("as_of")
+    if origin_as_of is not None:
+        candidates = [d for d in calendar if d > origin_as_of]
+    else:
+        buy_date = str(buy_fills[0].get("at", ""))[:10] if buy_fills else ""
+        candidates = [d for d in calendar if d >= buy_date] if buy_date else []
+    if candidates and candidates[0] <= as_of:
+        return candidates[0]
+    return None
 
 
 def _reconstruct_one(
@@ -157,57 +204,48 @@ def _reconstruct_one(
             sessions_held=0,
             took_partial=False,
             is_pending=True,
+            entry_confirmed=False,
         )
 
     buy = buy_fills[-1]
     if buy.get("price") is None and buy.get("status") in TERMINAL_UNFILLED_STATUSES:
         return None  # the entry itself never happened
-    entry_price = (
-        float(buy["price"]) if buy.get("price") is not None else float(rec["entry_ref_price"])
-    )
+    entry_confirmed = buy.get("price") is not None
+    entry_price = float(buy["price"]) if entry_confirmed else float(rec["entry_ref_price"])
     entry_qty = float(buy.get("qty") or rec.get("qty") or 0.0)
     if entry_qty <= 0:
         return None
 
-    sell_fills = sorted(
-        (
-            f
-            for f in fills
-            if f.get("side") == "sell" and f.get("status") not in TERMINAL_UNFILLED_STATUSES
-        ),
-        key=lambda f: f["at"],
-    )
-    sold_qty = sum(float(f["qty"]) for f in sell_fills)
+    live_sells = [
+        f
+        for f in fills
+        if f.get("side") == "sell" and f.get("status") not in TERMINAL_UNFILLED_STATUSES
+    ]
+    # Only PRICED sells reduce the position — an in-flight (accepted-but-
+    # unpriced) sell has not confirmed a fill, so its shares are still ours
+    # for heat purposes; it is tracked separately so exit decisions never
+    # re-sell qty already covered by a working order (WI-087 review #2).
+    sold_qty = sum(float(f["qty"]) for f in live_sells if f.get("price") is not None)
+    in_flight = sum(float(f["qty"]) for f in live_sells if f.get("price") is None)
     remaining = round(entry_qty - sold_qty, 6)
     if remaining <= 1e-9:
         return None  # fully closed
 
-    rec_as_of = rec.get("as_of")
-    entry_session: str | None = None
+    entry_session = entry_session_for(rec, buy_fills, calendar, as_of)
     sessions_held = 0
     current_stop = original_stop
     took_partial = False
-    if rec_as_of is not None:
-        candidates = [d for d in calendar if d > rec_as_of]
-    else:
-        # Legacy record predating the `as_of` field (real production data:
-        # WI-067's first live smoke, before the review fix that started
-        # stamping it) — fall back to the ORIGINAL (first) buy fill's
-        # timestamp date as the entry-session proxy. Must be the first fill,
-        # not buy_fills[-1]: a later reconciliation event (`_to_result`
-        # updating price/status) is stamped whenever that run happened to
-        # execute — real wall-clock time, not a trading session — and can
-        # land arbitrarily far past the calendar's last known date, which
-        # would silently exclude the position from every check again.
-        buy_date = str(buy_fills[0].get("at", ""))[:10]
-        candidates = [d for d in calendar if d >= buy_date] if buy_date else []
-    if candidates and candidates[0] <= as_of:
-        entry_session = candidates[0]
+    if entry_session is not None:
         sessions_held = sum(1 for d in calendar if entry_session < d <= as_of)
-        partial_fills = [f for f in sell_fills if f.get("reason") == "profit_partial"]
+        partial_fills = [f for f in live_sells if f.get("reason") == "profit_partial"]
         took_partial = bool(partial_fills)
         if took_partial and atr_at_entry > 0:
-            partial_session = partial_fills[0].get("session")
+            # first session-tagged partial anchors the trail window; per-order
+            # resolution upstream merges the tag onto reconciled records, and
+            # this scan is the defense in depth if it's ever absent anyway
+            partial_session = next(
+                (f.get("session") for f in partial_fills if f.get("session")), None
+            )
             if partial_session is not None:
                 window = frame[
                     (frame["symbol"] == rec["symbol"])
@@ -228,6 +266,8 @@ def _reconstruct_one(
         sessions_held=sessions_held,
         took_partial=took_partial,
         is_pending=False,
+        entry_confirmed=entry_confirmed,
+        in_flight_sell_qty=round(in_flight, 6),
     )
 
 
@@ -245,21 +285,46 @@ def reconstruct_positions(
     return positions
 
 
+class ExitMonitorGapError(RuntimeError):
+    """A held, confirmed position's symbol has NO bars anywhere in the frame —
+    a structural data gap (e.g. a crypto position against the yfinance-only
+    equity frame), not a one-day halt. Stops would silently never be
+    evaluated; fail loudly instead (WI-087 review #8). A symbol merely
+    missing TODAY's bar keeps the halt semantics simulate.py has (management
+    skipped, time stop still counts)."""
+
+
 def evaluate_exits(ledger: LedgerStore, frame: pd.DataFrame, as_of: str) -> list[ExitDecision]:
     """One decision per triggered event, in simulate.py's own priority order
     per position: gap-stop, then stop, then (if room) a profit partial, then
     (on whatever remains) a time stop — a partial and a same-session time
     stop on the remainder can both fire for one position in one run, exactly
     as simulate.py's step 2 (management) followed by step 3 (time-stop
-    trigger) allows within a single simulated day."""
+    trigger) allows within a single simulated day.
+
+    Only CONFIRMED entries (a priced buy fill) are ever evaluated — an
+    accepted-but-unpriced buy is heat, not sellable inventory. Decisions
+    cover at most `remaining - in_flight_sell_qty`: qty already covered by a
+    working sell order is never re-sold."""
     decisions: list[ExitDecision] = []
     today = frame[frame["date"] == as_of]
     bars_by_symbol = {str(sym): g.iloc[0] for sym, g in today.groupby("symbol")}
+    frame_symbols = set(frame["symbol"].unique())
 
     for pos in reconstruct_positions(ledger, frame, as_of):
         if pos.is_pending or pos.entry_session is None:
             continue  # nothing has actually been held yet
-        remaining = pos.remaining_qty
+        if not pos.entry_confirmed:
+            continue  # presumed-filled buys reserve heat but must never SELL (review #4)
+        if pos.symbol not in frame_symbols:
+            raise ExitMonitorGapError(
+                f"{pos.symbol} ({pos.asset_class}) holds an open position but has NO bars "
+                "in the monitoring frame — its stop/profit/time-stop would silently never "
+                "be evaluated. Feed its bars into the frame before monitoring can resume."
+            )
+        remaining = round(pos.remaining_qty - pos.in_flight_sell_qty, 6)
+        if remaining <= 1e-9:
+            continue  # everything left is already covered by a working sell order
         row = bars_by_symbol.get(pos.symbol)
         if row is not None:
             if float(row["open"]) <= pos.current_stop_price:
