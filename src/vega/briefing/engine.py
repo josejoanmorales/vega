@@ -13,6 +13,8 @@ import pandas as pd
 from vega.briefing.calls import EligibleFamily, RenderedCall, RenderedRejection
 from vega.data import snapshot
 from vega.execution.executor import read_failures
+from vega.execution.exits import ExitDecision
+from vega.lifecycle.live_trades import DemotionOutcome
 from vega.regime.calendar import MacroEvent, macro_events_within
 from vega.regime.inputs import fetch_fear_greed, fetch_vix
 from vega.regime.regime import RegimeState, compute_regime
@@ -38,6 +40,10 @@ class BriefingData:
     # the call engine failed must be distinguishable from "no eligible families"
     # (WI-067 review: evidence integrity requires the miss on the record).
     calls_error: str | None = None
+    # WI-087, additive: today's exit triggers and per-family live-track-record
+    # verdicts (empty defaults keep pre-WI-087 rendering byte-identical).
+    exits: tuple[ExitDecision, ...] = ()
+    signal_health: tuple[DemotionOutcome, ...] = ()
 
 
 def top_movers(bars: pd.DataFrame) -> pd.DataFrame:

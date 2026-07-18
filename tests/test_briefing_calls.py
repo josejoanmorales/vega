@@ -9,7 +9,6 @@ from vega.backtest.signals import EntryProposal
 from vega.briefing.calls import (
     CallsError,
     RenderedRejection,
-    _active_positions,
     _no_trade_reason,
     _rank_key,
     build_calls,
@@ -264,43 +263,27 @@ def test_no_trade_reason_is_honest_about_zero_proposals() -> None:
     assert "regime_risk_off (2)" in gated and "2 candidate(s)" in gated
 
 
-# ---- active-position reconstruction ------------------------------------------
+# ---- WI-087: a just-exited symbol is never re-entered the same run --------
 
 
-def test_active_positions_pending_semantics(tmp_path: Path) -> None:
+def test_exited_today_symbol_is_rejected_not_reentered(tmp_path: Path) -> None:
+    lifecycle, registry = _seed_paper_live(tmp_path)
     ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    filled = _rec(symbol="FILLED")
-    ledger.append(filled)
-    ledger.append_fill(filled.id, "ord-1", 100.0, 100.0, "filled")
-    ledger.append(_rec(symbol="TODAY_PENDING"))  # same-session, will execute this run
-    ledger.append(_rec(symbol="STALE_PENDING", as_of="2026-04-10"))  # expired, never fills
-
-    positions = _active_positions(ledger, AS_OF)
-    assert sorted(p.symbol for p in positions) == ["FILLED", "TODAY_PENDING"]
-    by_symbol = {p.symbol: p for p in positions}
-    assert by_symbol["FILLED"].current_stop_price == 92.5  # original stop, no trailing yet
-
-
-def test_active_positions_follow_supersede_chains(tmp_path: Path) -> None:
-    # WI-067 review: a filled-then-corrected position must keep its heat.
-    ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    original = _rec(symbol="CORRECTED")
-    ledger.append(original)
-    ledger.append_fill(original.id, "ord-1", 100.0, 100.0, "filled")
-    ledger.append(_rec(symbol="CORRECTED", stop_price=93.0, supersedes=original.id))
-
-    positions = _active_positions(ledger, AS_OF)
-    assert [p.symbol for p in positions] == ["CORRECTED"]
-    assert positions[0].current_stop_price == 93.0  # the corrected stop
-
-
-def test_active_positions_exclude_terminally_unfilled_orders(tmp_path: Path) -> None:
-    ledger = LedgerStore(tmp_path / "ledger.jsonl")
-    rec = _rec(symbol="CANCELED")
-    ledger.append(rec)
-    ledger.append_fill(rec.id, "ord-1", 100.0, None, "accepted")  # submitted...
-    ledger.append_fill(rec.id, "ord-1", 0.0, None, "canceled")  # ...died at the venue
-    assert _active_positions(ledger, AS_OF) == []
+    result = build_calls(
+        frame=_shocked_frame(),
+        as_of=AS_OF,
+        equity=100_000.0,
+        regime=_regime(),
+        ledger=ledger,
+        lifecycle=lifecycle,
+        backtest_registry=registry,
+        universe_entries=_universe(["AAA"]),
+        earnings_lookup=lambda *_: NO_EARNINGS,
+        exited_today=frozenset({"AAA"}),
+    )
+    assert result.calls == ()
+    assert [r.reason for r in result.rejections] == ["same_day_exit"]
+    assert ledger.entries() == []
 
 
 # ---- deterministic ranking --------------------------------------------------

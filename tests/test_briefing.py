@@ -8,6 +8,9 @@ from vega.briefing.calls import EligibleFamily, RenderedCall, RenderedRejection
 from vega.briefing.engine import BriefingData, top_movers
 from vega.briefing.render import render, write_briefing
 from vega.data.types import SnapshotConflictError
+from vega.execution.exits import ExitDecision
+from vega.lifecycle.demotion import DemotionVerdict
+from vega.lifecycle.live_trades import DemotionOutcome
 from vega.regime.calendar import MacroEvent
 from vega.regime.regime import RegimeState
 
@@ -121,6 +124,45 @@ def test_calls_error_is_published_not_just_printed() -> None:
     out = render(data)
     assert "## Ranked calls" in out
     assert "Ranked calls unavailable this run" in out and "boom" in out
+
+
+def test_no_exits_renders_v1_sections_unchanged() -> None:
+    assert "## Exits" not in render(_data())
+
+
+def test_exits_section_renders_triggered_decisions() -> None:
+    decision = ExitDecision("rec-1", "CDW", "equity", 52.2, "stop", "low 128.00 <= stop 130.00")
+    out = render(replace(_data(), exits=(decision,)))
+    assert "## Exits" in out and "CDW" in out and "stop" in out and "52.200000" in out
+
+
+def test_no_signal_health_renders_v1_sections_unchanged() -> None:
+    assert "## Signal health" not in render(_data())
+
+
+def test_signal_health_table_renders_verdicts() -> None:
+    healthy = DemotionOutcome(
+        "oversold_reversion_v1",
+        "equity",
+        DemotionVerdict(
+            should_demote=False, reason="within band", live_sharpe=1.2, band=(0.5, 2.0), n_trades=40
+        ),
+    )
+    demoted = DemotionOutcome(
+        "trend_pullback_v1",
+        "equity",
+        DemotionVerdict(
+            should_demote=True,
+            reason="live Sharpe -0.5 below band floor 0.1",
+            live_sharpe=-0.5,
+            band=(0.1, 1.0),
+            n_trades=35,
+        ),
+    )
+    out = render(replace(_data(), signal_health=(healthy, demoted)))
+    assert "## Signal health" in out
+    assert "oversold_reversion_v1" in out and "1.20" in out and "within band" in out
+    assert "trend_pullback_v1" in out and "DEMOTED" in out
 
 
 def test_briefing_write_once(tmp_path: Path) -> None:

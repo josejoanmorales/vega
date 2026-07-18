@@ -49,6 +49,8 @@ class OrderResult:
 class TradingBackend(Protocol):
     def submit_market_buy(self, symbol: str, qty: float, asset_class: str) -> OrderResult: ...
 
+    def submit_market_sell(self, symbol: str, qty: float, asset_class: str) -> OrderResult: ...
+
     def order_status(self, order_id: str) -> OrderResult: ...
 
 
@@ -89,16 +91,16 @@ class AlpacaPaperBackend:
             status=str(order.status.value if hasattr(order.status, "value") else order.status),
         )
 
-    def submit_market_buy(self, symbol: str, qty: float, asset_class: str) -> OrderResult:
-        from alpaca.trading.enums import OrderSide, TimeInForce
+    def _submit_market_order(
+        self, symbol: str, qty: float, asset_class: str, side: Any
+    ) -> OrderResult:
+        from alpaca.trading.enums import TimeInForce
         from alpaca.trading.models import Order
         from alpaca.trading.requests import MarketOrderRequest
 
         alpaca_symbol = f"{symbol}/USD" if asset_class == "crypto" else symbol
         tif = TimeInForce.GTC if asset_class == "crypto" else TimeInForce.DAY
-        request = MarketOrderRequest(
-            symbol=alpaca_symbol, qty=qty, side=OrderSide.BUY, time_in_force=tif
-        )
+        request = MarketOrderRequest(symbol=alpaca_symbol, qty=qty, side=side, time_in_force=tif)
         order = self._client.submit_order(request)
         assert isinstance(order, Order)  # noqa: S101 — narrows the union alpaca-py returns
         for _ in range(FILL_POLL_ATTEMPTS):
@@ -109,6 +111,16 @@ class AlpacaPaperBackend:
             assert isinstance(refreshed, Order)  # noqa: S101
             order = refreshed
         return self._to_result(order, symbol, qty)
+
+    def submit_market_buy(self, symbol: str, qty: float, asset_class: str) -> OrderResult:
+        from alpaca.trading.enums import OrderSide
+
+        return self._submit_market_order(symbol, qty, asset_class, OrderSide.BUY)
+
+    def submit_market_sell(self, symbol: str, qty: float, asset_class: str) -> OrderResult:
+        from alpaca.trading.enums import OrderSide
+
+        return self._submit_market_order(symbol, qty, asset_class, OrderSide.SELL)
 
     def order_status(self, order_id: str) -> OrderResult:
         from alpaca.trading.models import Order

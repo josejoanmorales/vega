@@ -23,6 +23,7 @@ def make_ohlc_frame(
             "symbol": symbol,
             "date": d,
             "adj_close": c,
+            "open": c,  # no gap by default; tests needing one mutate this column directly
             "close": c,
             "high": c + spread,
             "low": c - spread,

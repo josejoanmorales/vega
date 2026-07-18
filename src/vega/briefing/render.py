@@ -10,6 +10,8 @@ from vega.briefing.calls import RenderedCall, RenderedRejection
 from vega.briefing.engine import BriefingData
 from vega.common.paths import DATA_ROOT
 from vega.data.types import SnapshotConflictError
+from vega.execution.exits import ExitDecision
+from vega.lifecycle.live_trades import DemotionOutcome
 
 BRIEFINGS_DIR = DATA_ROOT / "briefings"
 TOP_N = 5
@@ -47,6 +49,29 @@ def _rejections_table(rejections: tuple[RenderedRejection, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _exits_table(exits: tuple[ExitDecision, ...]) -> str:
+    lines = ["| symbol | reason | qty | detail |", "|---|---|---|---|"]
+    lines += [f"| {e.symbol} | {e.reason} | {e.qty:.6f} | {e.detail} |" for e in exits]
+    return "\n".join(lines) + "\n"
+
+
+def _signal_health_table(outcomes: tuple[DemotionOutcome, ...]) -> str:
+    lines = [
+        "| family | sleeve | n live trades | live Sharpe | band | verdict |",
+        "|---|---|---|---|---|---|",
+    ]
+    for o in outcomes:
+        v = o.verdict
+        sharpe = f"{v.live_sharpe:.2f}" if v.live_sharpe is not None else "n/a"
+        band = f"[{v.band[0]:.2f}, {v.band[1]:.2f}]" if v.band is not None else "n/a"
+        verdict = "DEMOTED" if v.should_demote else v.reason
+        lines.append(
+            f"| {o.family} | {o.asset_class or '—'} | {v.n_trades} | {sharpe} | {band} | "
+            f"{verdict} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def render(data: BriefingData) -> str:
     r = data.regime
     breadth = f"{r.breadth_pct}%" if r.breadth_pct is not None else "insufficient history"
@@ -77,6 +102,8 @@ def render(data: BriefingData) -> str:
             f"- {f['at']} `{f['symbol']}` (rec {f['ref_id'][:8]}): {f['error']}"
             for f in data.failures
         ]
+    if data.exits:
+        parts += ["", "## Exits", "", _exits_table(data.exits)]
     if data.calls_error is not None:
         parts += [
             "",
@@ -98,6 +125,8 @@ def render(data: BriefingData) -> str:
             f"params {f.justifying_params}"
             for f in data.eligible_families
         ]
+    if data.signal_health:
+        parts += ["", "## Signal health", "", _signal_health_table(data.signal_health)]
     parts += [
         "",
         "---",

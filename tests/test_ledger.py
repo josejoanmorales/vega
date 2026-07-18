@@ -70,6 +70,59 @@ def test_override_links_and_rejects_unknown_ref(tmp_path: Path) -> None:
         store.append_override("nope", "skip", "", actor="human:jose")
 
 
+def test_append_fill_defaults_side_to_buy(tmp_path: Path) -> None:
+    store = LedgerStore(tmp_path / "l.jsonl")
+    rid = store.append(_rec())
+    store.append_fill(rid, "ord-1", 4.0, 230.0, "filled")
+    fill = store.fills()[0]
+    assert fill["side"] == "buy" and fill["reason"] is None and fill["session"] is None
+
+
+def test_latest_with_all_fills_includes_buy_and_sell(tmp_path: Path) -> None:
+    store = LedgerStore(tmp_path / "l.jsonl")
+    rid = store.append(_rec())
+    store.append_fill(rid, "ord-1", 4.0, 230.0, "filled")
+    store.append_fill(
+        rid,
+        "ord-2",
+        2.0,
+        250.0,
+        "filled",
+        side="sell",
+        reason="profit_partial",
+        session="2026-07-10",
+    )
+    (rec, fills) = store.latest_with_all_fills()[0]
+    assert rec["id"] == rid
+    assert {f["side"] for f in fills} == {"buy", "sell"}
+    sell = next(f for f in fills if f["side"] == "sell")
+    assert sell["reason"] == "profit_partial" and sell["session"] == "2026-07-10"
+
+
+def test_latest_with_all_fills_resolves_through_supersede_chains(tmp_path: Path) -> None:
+    store = LedgerStore(tmp_path / "l.jsonl")
+    first = _rec()
+    store.append(first)
+    store.append_fill(first.id, "ord-1", 4.0, 230.0, "filled")
+    corrected = _rec(stop_price=222.0, supersedes=first.id)
+    store.append(corrected)
+    store.append_fill(first.id, "ord-2", 4.0, 231.0, "filled", side="sell", reason="stop")
+    (rec, fills) = store.latest_with_all_fills()[0]
+    assert rec["id"] == corrected.id  # the SURVIVING rec in the chain
+    assert len(fills) == 2  # both fills, filed against the superseded id, still resolve
+
+
+def test_latest_with_fills_ignores_sell_fills(tmp_path: Path) -> None:
+    # a sold-out position must still resolve as "entered" for pending_longs'
+    # purposes — latest_with_fills answers "was it entered", not "is it open"
+    store = LedgerStore(tmp_path / "l.jsonl")
+    rid = store.append(_rec())
+    store.append_fill(rid, "ord-1", 4.0, 230.0, "filled")
+    store.append_fill(rid, "ord-2", 4.0, 240.0, "filled", side="sell", reason="stop")
+    (rec, fill) = store.latest_with_fills()[0]
+    assert fill is not None and fill["side"] == "buy" and fill["price"] == 230.0
+
+
 def test_file_only_ever_grows(tmp_path: Path) -> None:
     path = tmp_path / "ledger.jsonl"
     store = LedgerStore(path)

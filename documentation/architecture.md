@@ -24,6 +24,7 @@ price, percentage, or statistic from memory.
 | `src/vega/lifecycle/` — signal promotion state machine | WI-065 | shipped |
 | `src/vega/signals/` — first 3 candidate signal families | WI-066 | shipped (1 paper-live, 1 held, 1 retired) |
 | `src/vega/briefing/calls.py` — ranked calls, entries only | WI-067 | shipped |
+| `src/vega/execution/exits.py`, `lifecycle/live_trades.py` — exit monitor + auto-demotion | WI-087 | shipped |
 
 ## Data layer (WI-058)
 
@@ -323,6 +324,81 @@ execution — same-day re-runs would have stacked duplicate positions. The fix s
   night — 0 duplicate appends, conflict tolerated, and `reconcile_fills` healed both
   broken acceptance records into real priced fills (CDW @ 132.55, CSCO @ 110.66).
   221 tests (was 208), verify.sh green.
+
+## Exit monitor + auto-demotion (WI-087)
+
+Closes the position loop WI-067 deliberately left open. `src/vega/execution/exits.py`
+mirrors `backtest/simulate.py`'s exit mechanics against the live ledger — same triggers
+(gap-stop, stop, profit-partial, time-stop), same priority order, same session-counting
+semantics — so a position closes live the same way the backtest that justified its
+promotion said it would.
+
+- **State is derived, never persisted**: `reconstruct_positions(ledger, frame, as_of)` is a
+  pure function of (entry fill, exit fills, `exit_params`, the pooled equity/ETF session
+  calendar) — remaining qty, trailed stop, and sessions-held are recomputed fresh every
+  run, safe to re-run any number of times. `OpenPosition.is_pending` distinguishes a
+  same-session submitted-not-yet-filled call (original stop, no trail) from a filled,
+  still-open position (trailed stop, qty net of partials) — the ONE reconstruction both
+  heat accounting (`briefing/calls.py`, via `to_heat()`) and exit evaluation read, so the
+  two can never drift the way two independent reconstructions would.
+- **The trail is windowed, not replayed**: a partial exit is tagged with the deciding
+  `session` (a new additive field on ledger fills — see below); the trail's high-water
+  close is `max(close)` over `[partial_session, as_of]` from the store, which is
+  mathematically identical to simulate.py's day-by-day running max without needing to
+  replay every intervening session.
+- **Documented timing divergence (accepted by Jose at enrichment time)**: simulate.py
+  triggers stop/profit intraday on the same session bar (full history, already known); the
+  live monitor runs pre-market and can only see the last COMPLETED session, so a triggered
+  stop/profit submits a market sell that fills one session later than the backtest's
+  intraday fill. Time stops already had this lag in simulate.py itself (queue-and-fill-at-
+  next-open), so they match exactly; only stop/profit fills carry the one-session gap.
+- **Ledger schema, additive**: `LedgerStore.append_fill` gains `side` ("buy"/"sell"),
+  `reason` (simulate.py's own vocabulary: gap_stop/stop/profit_partial/time_stop), and
+  `session` (the deciding store session — never a wall-clock timestamp). `Recommendation`
+  already had `as_of` from WI-067. `latest_with_all_fills()` is the new chain-aware join
+  (every fill, buy and sell, resolved through supersede chains) that both `exits.py` and
+  `lifecycle/live_trades.py` build on; the existing `latest_with_fills()` (buy-only, one
+  fill per chain) is untouched — it answers "was this entered", not "is this still open".
+- **Daily flow order** (`briefing/__main__.py`): reconcile fills → evaluate + execute exits
+  → check auto-demotions → `build_calls` (heat and idempotency are now exit-aware) →
+  entries. A symbol just exited is excluded from re-entry the same run
+  (`exited_today`/`same_day_exit`) — simulate.py never re-enters a symbol the session it
+  exits, so neither does this.
+- **Auto-demotion activates for real** (`lifecycle/live_trades.py`): `closed_round_trips`
+  turns every realized exit lot into a `backtest.live_metrics.LiveTrade` row (one row per
+  lot — a partial followed by a time-stop produces two), grouped by family (parsed from
+  `signal_attribution`). `check_and_apply_demotions` evaluates every `paper-live`/`trusted`
+  family per asset-class sleeve against its justifying backtest band and calls
+  `LifecycleRegistry.demote(..., automatic=True)` — agent-legal, unlike promotion — the
+  moment the evidence says so; demotes at most once per family per run even when multiple
+  sleeves qualify (a second `demote()` on an already-demoted family would raise).
+- **Real production bug caught by the live smoke test, not by review**: the two real open
+  positions from WI-067's first live smoke (CDW, CSCO) predate the `as_of` field entirely
+  (it was added during WI-067's *review fixes*, after those positions were already
+  ledgered) — `rec.get("as_of")` is `None` for both. Without a fallback, `reconstruct_positions`
+  would derive no `entry_session` for them and they would sit outside every exit check
+  forever — a live position with a 7-session time stop that could never fire. Fixed with a
+  fallback to the ORIGINAL (first) buy fill's timestamp date. A second bug surfaced
+  immediately after: the fallback initially read the LATEST buy fill's timestamp, which is
+  the reconciliation event's wall-clock time (whenever that run happened to execute) —
+  for CDW/CSCO this landed on a date one full day past the store's most recent session,
+  producing an empty candidate list and silently reproducing the same bug. Fixed by reading
+  `buy_fills[0]` (the original submission) instead of `buy_fills[-1]`; both bugs are now
+  regression-tested (`test_legacy_position_without_as_of_falls_back_to_fill_timestamp`,
+  `test_legacy_fallback_uses_first_buy_fill_not_a_later_reconciliation`).
+- **Briefing gains two sections**: "Exits" (symbol, reason, qty, trigger detail) and
+  "Signal health" (per family/sleeve: live trade count, live Sharpe when computable, band,
+  verdict) — both empty-default and absent from rendering until there's something to show,
+  preserving the v1/v2 byte-identical-when-empty contract.
+- **Live smoke (2026-07-17, real store/regime/ledger/lifecycle)**: reconstructed all 4 real
+  open positions correctly (CDW/CSCO via the legacy fallback, entry_session on the current
+  session; ALL/C — two fresh signals this run — correctly submitted, sized, and pending);
+  zero exit triggers fired (none of the four is near its stop, profit target, or time
+  stop yet — an honest, verified negative, not a skipped check); a same-day re-run
+  produced zero duplicate appends (`executed 0 call(s)` on the second pass, proving
+  idempotency against real state); `check_and_apply_demotions` ran cleanly with
+  `insufficient_sample` (fewer than 30 real live trades exist yet — correct, no false
+  demotion). 253 tests (was 221), verify.sh green.
 
 ## Verification gate
 

@@ -37,14 +37,12 @@ from vega.data import snapshot
 from vega.data.types import UniverseEntry
 from vega.data.universe import load_universe
 from vega.data.universe import symbols as universe_symbols
-from vega.execution.executor import TERMINAL_UNFILLED_STATUSES
+from vega.execution.exits import reconstruct_positions, to_heat
 from vega.ledger.store import LedgerStore
 from vega.lifecycle.lifecycle import LifecycleRegistry, is_eligible_state
 from vega.regime.regime import RegimeState
-from vega.risk.clusters import contaminates_equity_beta
 from vega.risk.engine import open_position_heat, propose, to_recommendation
 from vega.risk.gates import EarningsFact
-from vega.risk.heat import OpenPositionHeat
 from vega.risk.types import Rejection, SizedProposal
 from vega.signals.breakout_volume import BreakoutVolumeSignal
 from vega.signals.oversold_reversion import OversoldReversionSignal
@@ -115,15 +113,16 @@ class CallsResult:
 
 def load_signal_frame(as_of: str, root: Path = snapshot.DATA_ROOT) -> pd.DataFrame:
     """Raw OHLCV + adj_close for every yfinance-sourced (equity/ETF) symbol —
-    the one frame both signal decisions (adj_close) and risk sizing (raw
-    OHLC) read from. Date-bounded at the source: `<= as_of` enforces the PIT
+    the one frame signal decisions (adj_close), risk sizing (raw OHLC), and
+    the exit monitor (`open`, for gap-stops — WI-087) all read from, loaded
+    once per run. Date-bounded at the source: `<= as_of` enforces the PIT
     contract before pandas ever sees a row, and the lookback floor keeps the
     frame O(lookback) instead of O(store history) as the store grows."""
     floor = (date.fromisoformat(as_of) - timedelta(days=FRAME_LOOKBACK_CALENDAR_DAYS)).isoformat()
     con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
     try:
         return con.execute(
-            "SELECT symbol, date, close, high, low, adj_close, volume "
+            "SELECT symbol, date, open, close, high, low, adj_close, volume "
             "FROM bars WHERE source = 'yfinance' AND date <= ? AND date >= ?",
             [as_of, floor],
         ).df()
@@ -173,43 +172,6 @@ def _eligible_families(
     return out
 
 
-def _active_positions(ledger: LedgerStore, as_of: str) -> list[OpenPositionHeat]:
-    """Everything that is (or will imminently be) real exposure: filled longs —
-    resolved through supersede chains — plus THIS session's still-pending calls,
-    which the executor will submit later in the same run. Pending calls from
-    earlier sessions are expired by the executor (they never fill) and orders
-    that terminally failed at the venue carry no heat. Uses the ORIGINAL stop
-    price (no trailing-stop tracking until WI-087) — overstates heat, the
-    conservative direction."""
-    positions = []
-    for rec, fill in ledger.latest_with_fills():
-        if rec["direction"] != "long":
-            continue
-        if fill is None and rec.get("as_of") != as_of:
-            continue  # stale pending — will expire, never fills
-        if fill is not None and fill.get("price") is None:
-            if fill.get("status") in TERMINAL_UNFILLED_STATUSES:
-                continue  # order died at the venue — no position exists
-            # accepted-but-unpriced: presume it fills at the open (conservative)
-        qty = (fill or {}).get("qty") or rec.get("qty")
-        if not qty:
-            continue
-        exit_params = rec.get("exit_params") or {}
-        positions.append(
-            OpenPositionHeat(
-                symbol=rec["symbol"],
-                asset_class=rec["asset_class"],
-                qty=float(qty),
-                entry_price=float(rec["entry_ref_price"]),
-                current_stop_price=float(rec["stop_price"]),
-                contaminates_equity_beta=contaminates_equity_beta(
-                    exit_params.get("spy_correlation")
-                ),
-            )
-        )
-    return positions
-
-
 def _rank_key(item: tuple[EntryProposal, float]) -> tuple[float, float, str]:
     proposal, family_dev_sharpe = item
     # confidence DESC, then family dev-Sharpe DESC (moot with one live family,
@@ -239,6 +201,7 @@ def build_calls(
     backtest_registry: BacktestRegistry | None = None,
     universe_entries: list[UniverseEntry] | None = None,
     earnings_lookup: Callable[[str, str], EarningsFact] = EarningsFact.lookup,
+    exited_today: frozenset[str] = frozenset(),
 ) -> CallsResult:
     """One pre-market pass: scan every paper-live+ family (at its justified
     parameterization) over `frame` as of `as_of`, risk-size each proposal in
@@ -248,6 +211,9 @@ def build_calls(
 
     `universe_entries` defaults to the committed universe artifact; injectable
     for tests (a synthetic frame's symbols are rarely in the real universe).
+    `exited_today` (WI-087): symbols the exit monitor just submitted a sell
+    for THIS run — simulate.py never re-enters a symbol the same session it
+    exits, so neither does this.
     """
     lifecycle = lifecycle or LifecycleRegistry()
     backtest_registry = backtest_registry or BacktestRegistry()
@@ -270,7 +236,7 @@ def build_calls(
             scored_proposals.append((proposal, fam.dev_sharpe))
     scored_proposals.sort(key=_rank_key)
 
-    open_positions = _active_positions(ledger, as_of)
+    open_positions = [to_heat(p) for p in reconstruct_positions(ledger, frame, as_of)]
     held = {p.symbol for p in open_positions}
     calls: list[RenderedCall] = []
     rejections: list[RenderedRejection] = []
@@ -284,6 +250,17 @@ def build_calls(
                     proposal.signal_family,
                     "already_held",
                     "an active position or same-session pending call exists — entries never stack",
+                )
+            )
+            continue
+        if symbol in exited_today:
+            rejections.append(
+                RenderedRejection(
+                    symbol,
+                    proposal.signal_family,
+                    "same_day_exit",
+                    "this symbol was just exited this run — no same-session re-entry "
+                    "(matches simulate.py)",
                 )
             )
             continue
