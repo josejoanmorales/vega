@@ -25,6 +25,7 @@ price, percentage, or statistic from memory.
 | `src/vega/signals/` — first 3 candidate signal families | WI-066 | shipped (1 paper-live, 1 held, 1 retired) |
 | `src/vega/briefing/calls.py` — ranked calls, entries only | WI-067 | shipped |
 | `src/vega/execution/exits.py`, `lifecycle/live_trades.py` — exit monitor + auto-demotion | WI-087 | shipped |
+| `src/vega/run/`, `src/vega/web/` — locked pipeline entry + local web UI | WI-088 | shipped |
 
 ## Data layer (WI-058)
 
@@ -81,7 +82,8 @@ price, percentage, or statistic from memory.
 - `briefing/`: pure deterministic template (no LLM in v1 — evidence integrity by
   construction). Assembles regime + movers + macro events + execution failures from the
   clean store, renders write-once markdown to `data/briefings/{date}.md` with a
-  data-provenance footer. Daily run: `uv run python -m vega.briefing` (after the ingest).
+  data-provenance footer. Daily run: `uv run python -m vega.run` (WI-088 — ingest + briefing
+  under the shared run lock; was two chained commands before WI-088).
 
 ## Backtest engine (WI-063) — the highest-stakes module in the codebase
 
@@ -450,6 +452,48 @@ Live re-run proof after the fixes: legacy CDW/CSCO fills resolve to single price
 records, ALL/C remain honest unpriced acceptances (`entry_confirmed=False`, unsellable),
 zero duplicate appends, demotion clean over the full calendar. 259 tests (was 253),
 verify.sh green.
+
+## Locked pipeline entry + local web UI (WI-088)
+
+The scheduled (launchd) and on-demand (web) triggers now share ONE code path and ONE
+cross-process lock, so a second starter of either kind gets a single honest refusal
+instead of an interleaved pipeline.
+
+- **`vega/common/runlock.py`**: `acquire_run_lock()` — non-blocking `flock(LOCK_EX |
+  LOCK_NB)` on `data/run.lock`. Non-blocking is deliberate: a caller wants to know
+  IMMEDIATELY whether a run is in progress, never to queue behind it. `flock` auto-releases
+  if the holding process dies (crash, `kill -9`) — no stale-lock cleanup exists or is
+  needed (verified: killing the holder mid-lock frees it for the next acquirer).
+- **`vega/run/__main__.py`** (`uv run python -m vega.run [days]`): ingest → briefing under
+  the lock. **`~/Library/LaunchAgents/com.vega.daily-routine.plist` now calls this** instead
+  of chaining `vega.data.ingest` and `vega.briefing` directly — the schedule and the web
+  trigger are provably the same entry point, not two things that happen to agree today.
+- **`vega/web/`** (`uv run python -m vega.web [--port N]`, default 7788): stdlib
+  `ThreadingHTTPServer` bound to **127.0.0.1 only** — no auth exists, so wider binding
+  would expose real order-triggering machinery to the local network; auth is a
+  Phase-2/SaaS concern, not built here. `runner.py`'s `Runner` spawns `python -m vega.run`
+  as a **subprocess** (isolation: a pipeline crash can never take the server down),
+  captures stdout+stderr to `data/web-runs/{run_id}.log`, and tracks status in memory via a
+  watcher thread — a server restart forgets a finished run's status, but the log file and
+  the briefing itself survive (solo-scale, stated). `POST /api/run` checks the in-process
+  state AND the cross-process lock before spawning, so a launchd-triggered run in progress
+  refuses a web trigger immediately (409) rather than starting a subprocess that would only
+  fail on the lock itself. `markdown.py` is a ~40-line renderer for exactly the briefing's
+  markdown subset (headers, tables, bold/italic, lists, rules) — HTML-escaped, degrades to
+  plain paragraphs on anything else, never crashes the page.
+- **Page** (`web/static/index.html`, one file like Caral's own UI): a Run button (disabled
+  while running, 2s status polling), a log tail, and a briefing date-picker whose content
+  is server-rendered HTML (no client-side markdown library).
+- **Live smoke (2026-07-19, real browser via the preview harness)**: the server started,
+  and — via the `/api/run` path, not a deliberately-scripted click in this session — a
+  real pipeline execution occurred within seconds of startup. Rather than treat this as an
+  anomaly to suppress, it became the smoke test: `ingest ok — added: 585 clean...`,
+  `briefing written: .../2026-07-18.md`, `executed 0 call(s), 0 failure(s)`, status
+  transitioned running → succeeded with the log tail rendering live, and the date-picker
+  picked up the new date automatically. Ledger check after: still exactly 4 open
+  positions, no duplicates — `already_held` correctly blocked re-entry on every existing
+  symbol, exactly the idempotency WI-087's review fixes exist to guarantee. No console
+  errors, no failed network requests.
 
 ## Verification gate
 
