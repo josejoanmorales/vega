@@ -495,6 +495,45 @@ instead of an interleaved pipeline.
   symbol, exactly the idempotency WI-087's review fixes exist to guarantee. No console
   errors, no failed network requests.
 
+### WI-088 strongest-model review fixes (10 findings, all shipped)
+
+The review's headline: the on-demand run trigger had no defense against a drive-by
+browser POST and no audit trail — which is what made the smoke-test's own trigger
+unattributable. All fixed:
+
+- **CSRF drive-by (server.py)**: `POST /api/run` now requires an `X-Vega-Run: 1` header
+  (which a cross-origin "simple request" cannot attach without a preflight the server
+  never answers), plus Host + Origin validation to close DNS rebinding. A malicious tab in
+  the operator's browser can no longer fire a real pipeline.
+- **Trigger auditability (server.py)**: every `/api/run` attempt appends a JSON line to
+  `data/web-runs/audit.log` (UTC time, client, User-Agent, Origin, Referer, outcome). The
+  live smoke retroactively identified its own mystery trigger this way — the `User-Agent`
+  was the Claude preview-harness Electron browser; no trigger can be unattributable again.
+- **Snake_case-eating markdown (markdown.py)**: the inline-italic regex mangled every
+  `risk_on`/`already_held`/family name and emitted invalid interleaved `<b>/<i>` on the
+  regime line daily. Italics are now whole-line only (the only form briefings use), and
+  backtick code spans render — `RISK_ON` and `oversold_reversion_v1` display intact,
+  browser-verified.
+- **Skip ≠ failure (run/__main__.py, runner.py)**: a lost lock race exits `EXIT_SKIPPED=3`
+  and the watcher maps it to `state="skipped"`, so neither launchd logs nor the UI mistake
+  a correct no-op for a broken pipeline. A one-shot retry absorbs a probe's microsecond
+  lock hold so a status poll can't cost the day's scheduled run.
+- **Honest status (runner.py, index.html)**: `status()` probes the cross-process lock when
+  it owns no run and reports `state="external"` — a restarted server, or a browser during
+  a launchd run, no longer claims "idle" while the machine is mid-pipeline; the page
+  disables Run and says so.
+- **Watcher hardening (runner.py)**: the state transition is in a `try/finally` so a
+  log-close error can't strand `state="running"` forever and lock out every future run.
+- **Robustness (server.py, index.html)**: server-side faults return 500 (not 400) and
+  never send a second response into a half-written stream; a port collision prints an
+  actionable message instead of a raw traceback; the Run button re-enables on a failed
+  fetch and surfaces non-202 outcomes instead of silently showing "idle".
+
+Live re-run proof after the fixes: header-less and cross-origin POSTs both rejected 403
+(audited), a legitimate UI run succeeded and was attributed in the audit log, the briefing
+rendered with snake_case intact, and the ledger still held exactly 4 positions (zero
+duplicates). 294 tests (was 283), verify.sh green.
+
 ## Verification gate
 
 `scripts/verify.sh` — executed by Caral's daily-build runner; non-zero exit = failed build.

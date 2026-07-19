@@ -8,9 +8,27 @@ def test_headers() -> None:
     assert "<h3>SubSub</h3>" in out
 
 
-def test_bold_and_italic() -> None:
-    out = render_markdown("**bold** and _italic_")
-    assert "<b>bold</b>" in out and "<i>italic</i>" in out
+def test_bold_inline() -> None:
+    out = render_markdown("**bold** and normal")
+    assert "<b>bold</b>" in out
+
+
+def test_snakecase_is_never_mangled_by_italics() -> None:
+    # WI-088 review: inline underscores must stay literal — briefings are full
+    # of snake_case (family names, regime values, rejection reasons).
+    out = render_markdown("**Composite: RISK_ON** — trend risk_on, reason stale_price")
+    assert "RISK_ON" in out and "risk_on" in out and "stale_price" in out
+    assert "<i>" not in out  # no spurious italics
+
+
+def test_whole_line_italic() -> None:
+    out = render_markdown("_no data for the last two sessions_")
+    assert "<i>no data for the last two sessions</i>" in out
+
+
+def test_code_span() -> None:
+    out = render_markdown("- `oversold_reversion_v1` (paper-live)")
+    assert "<code>oversold_reversion_v1</code>" in out  # underscores intact inside code
 
 
 def test_table() -> None:

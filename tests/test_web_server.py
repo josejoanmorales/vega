@@ -41,9 +41,10 @@ def _get(port: int, path: str) -> tuple[int, dict | str]:
     return resp.status, json.loads(body) if "json" in ctype else body
 
 
-def _post(port: int, path: str) -> tuple[int, dict]:
+def _post(port: int, path: str, headers: dict | None = None) -> tuple[int, dict]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-    conn.request("POST", path)
+    # the page's own fetch sends X-Vega-Run; default it so happy-path tests pass
+    conn.request("POST", path, headers=headers if headers is not None else {"X-Vega-Run": "1"})
     resp = conn.getresponse()
     body = json.loads(resp.read().decode())
     conn.close()
@@ -110,3 +111,35 @@ def test_second_run_while_running_returns_409(live_server: int, monkeypatch) -> 
 def test_unknown_get_path_404s(live_server: int) -> None:
     status, _ = _get(live_server, "/api/nope")
     assert status == 404
+
+
+# ---- WI-088 review-fix regressions ------------------------------------------
+
+
+def test_run_without_custom_header_is_rejected_403(live_server: int) -> None:
+    # CSRF drive-by: a POST without X-Vega-Run (what a cross-site simple
+    # request looks like) must never trigger a real pipeline.
+    status, body = _post(live_server, "/api/run", headers={})
+    assert status == 403
+    assert "X-Vega-Run" in body["error"]
+
+
+def test_run_with_cross_site_origin_is_rejected_403(live_server: int) -> None:
+    status, body = _post(
+        live_server, "/api/run", headers={"X-Vega-Run": "1", "Origin": "http://evil.example"}
+    )
+    assert status == 403
+    assert "Origin" in body["error"]
+
+
+def test_run_attempts_are_audited(live_server: int, tmp_path: Path, monkeypatch) -> None:
+    audit = tmp_path / "audit.log"
+    monkeypatch.setattr(server_module, "AUDIT_LOG", audit)
+    monkeypatch.setattr(server_module.runner, "start", lambda: "audited-run")
+    _post(live_server, "/api/run")
+    _post(live_server, "/api/run", headers={})  # rejected
+    lines = [json.loads(x) for x in audit.read_text().splitlines()]
+    assert len(lines) == 2
+    assert lines[0]["outcome"] == "started: audited-run"
+    assert "rejected" in lines[1]["outcome"]
+    assert all("at" in ln and "client" in ln for ln in lines)

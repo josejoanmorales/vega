@@ -87,3 +87,36 @@ def test_start_refused_when_external_lock_held(tmp_path: Path) -> None:
                 runner.start()
         finally:
             runner_module.is_run_in_progress = original
+
+
+def test_skipped_exit_code_maps_to_skipped_not_failed(tmp_path: Path, monkeypatch) -> None:
+    # WI-088 review: a lost lock race (EXIT_SKIPPED=3) is a correct no-op,
+    # NOT a failure — the UI and launchd logs must not mistake it for one.
+    runner = Runner(runs_dir=tmp_path)
+    monkeypatch.setattr(
+        "vega.web.runner.subprocess.Popen",
+        lambda *a, **kw: _REAL_POPEN(
+            [sys.executable, "-c", "import sys; sys.exit(3)"],
+            stdout=kw["stdout"],
+            stderr=kw["stderr"],
+        ),
+    )
+    runner.start()
+    _wait_for(lambda: runner.status()["state"] != "running")
+    status = runner.status()
+    assert status["state"] == "skipped"
+    assert status["returncode"] == 3
+
+
+def test_status_reports_external_when_lock_held_without_tracked_run(tmp_path: Path) -> None:
+    # WI-088 review: a restarted server (no tracked run) must not claim "idle"
+    # while an orphaned/launchd pipeline still holds the lock.
+    runner = Runner(runs_dir=tmp_path)
+    import vega.web.runner as runner_module
+
+    original = runner_module.is_run_in_progress
+    runner_module.is_run_in_progress = lambda path=None: True  # type: ignore[assignment]
+    try:
+        assert runner.status() == {"state": "external"}
+    finally:
+        runner_module.is_run_in_progress = original

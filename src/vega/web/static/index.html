@@ -49,6 +49,13 @@ async function refreshStatus() {
     runBtn.disabled = false;
     return s;
   }
+  if (s.state === 'external') {
+    statusLine.textContent = 'a scheduled/external run is in progress — Run is disabled' +
+      (s.last_run ? ` (last web run: ${s.last_run})` : '');
+    logTail.style.display = 'none';
+    runBtn.disabled = true;
+    return s;
+  }
   runBtn.disabled = (s.state === 'running');
   statusLine.textContent = `${s.state} — run ${s.run_id} started ${s.started_at}` +
     (s.finished_at ? ` finished ${s.finished_at} (exit ${s.returncode})` : '');
@@ -61,7 +68,7 @@ function startPolling() {
   if (polling) return;
   polling = setInterval(async () => {
     const s = await refreshStatus();
-    if (s.state !== 'running') {
+    if (s.state !== 'running' && s.state !== 'external') {
       clearInterval(polling);
       polling = null;
       await loadBriefingList();
@@ -71,15 +78,20 @@ function startPolling() {
 
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
-  const res = await fetch('/api/run', { method: 'POST' });
-  if (res.status === 409) {
+  try {
+    const res = await fetch('/api/run', { method: 'POST', headers: { 'X-Vega-Run': '1' } });
     const body = await res.json();
-    statusLine.textContent = `refused: ${body.error}`;
+    if (!res.ok) {
+      statusLine.textContent = `refused (${res.status}): ${body.error}`;
+      runBtn.disabled = false;
+      return;
+    }
+    startPolling();
+    refreshStatus();
+  } catch (err) {
+    statusLine.textContent = `request failed: ${err}`;
     runBtn.disabled = false;
-    return;
   }
-  startPolling();
-  refreshStatus();
 });
 
 async function loadBriefingList() {

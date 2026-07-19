@@ -2,7 +2,11 @@
 pipeline crash can never take the web server down, and exposes its live
 status to the API. One `Runner` instance per server process; a run's
 in-memory status is lost on server restart, but the log file and (if it got
-that far) the briefing itself survive — acceptable at solo scale.
+that far) the briefing itself survive — and `status()` still reports an
+`external` state whenever the cross-process lock is held by a run this
+server doesn't own (an orphaned child from a previous server, or launchd's
+scheduled run), so the UI never claims "idle" while the machine is
+mid-pipeline (WI-088 review).
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from vega.common.runlock import is_run_in_progress
 
 RUNS_DIR = DATA_ROOT / "web-runs"
 LOG_TAIL_LINES = 100
+EXIT_SKIPPED = 3  # mirrors vega.run.__main__.EXIT_SKIPPED — a lost lock race is not a failure
 
 
 class RunAlreadyInProgress(RuntimeError):
@@ -29,7 +34,7 @@ class RunAlreadyInProgress(RuntimeError):
 @dataclass
 class _RunState:
     run_id: str
-    state: str  # "running" | "succeeded" | "failed"
+    state: str  # "running" | "succeeded" | "skipped" | "failed"
     started_at: str
     log_path: Path
     finished_at: str | None = None
@@ -45,9 +50,10 @@ class Runner:
     def start(self) -> str:
         """Spawn the pipeline. Raises `RunAlreadyInProgress` if this server's
         own tracked run is still active, or if the cross-process run lock is
-        already held (e.g. a launchd-triggered run) — checked BEFORE spawning
-        so the caller gets an immediate, honest refusal rather than a
-        subprocess that starts only to fail fast on the lock itself."""
+        already held (e.g. a launchd-triggered run) — the probe gives an
+        immediate honest 409; the subprocess's own lock acquire remains the
+        real arbiter for anything the probe missed (a lost race surfaces as
+        `skipped`, never as a duplicate pipeline)."""
         with self._lock:
             if self._current is not None and self._current.state == "running":
                 raise RunAlreadyInProgress(f"run {self._current.run_id} is still in progress")
@@ -75,15 +81,36 @@ class Runner:
 
     def _watch(self, process: subprocess.Popen[bytes], log_file: Any) -> None:
         returncode = process.wait()
-        log_file.close()
-        with self._lock:
-            assert self._current is not None  # noqa: S101 — set by start() before this thread runs
-            self._current.returncode = returncode
-            self._current.finished_at = datetime.now(UTC).isoformat()
-            self._current.state = "succeeded" if returncode == 0 else "failed"
+        # The state transition MUST happen even if log-file cleanup raises —
+        # a watcher death pre-transition left state 'running' forever and
+        # locked out every future web run until restart (WI-088 review).
+        try:
+            with self._lock:
+                assert self._current is not None  # noqa: S101 — set by start() before this thread
+                self._current.returncode = returncode
+                self._current.finished_at = datetime.now(UTC).isoformat()
+                if returncode == 0:
+                    self._current.state = "succeeded"
+                elif returncode == EXIT_SKIPPED:
+                    self._current.state = "skipped"  # lost the lock race — a no-op, not a failure
+                else:
+                    self._current.state = "failed"
+        finally:
+            try:
+                log_file.close()
+            except OSError:
+                pass  # the log is best-effort capture; state honesty comes first
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            if self._current is None or self._current.state != "running":
+                # No run of OURS is active — but the machine may still be
+                # mid-pipeline (orphaned child of a dead server, or launchd).
+                if is_run_in_progress():
+                    external = {"state": "external"}
+                    if self._current is not None:
+                        external["last_run"] = self._current.state
+                    return external
             if self._current is None:
                 return {"state": "idle"}
             tail = ""

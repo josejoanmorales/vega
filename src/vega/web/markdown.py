@@ -1,8 +1,13 @@
-"""A ~40-line renderer for exactly the markdown subset Vega's briefings use
-(h1-h3, `|`-tables, `**bold**`, `-`-lists, `---` rules, `_italic_`) — no CDN,
-no JS libraries, deterministic. Anything outside this subset degrades to a
-plain paragraph rather than crashing (a briefing is always readable, never
-a stack trace on the page)."""
+"""A small renderer for exactly the markdown subset Vega's briefings use
+(h1-h3, `|`-tables, `**bold**`, `` `code` `` spans, `-`-lists, `---` rules,
+and FULL-LINE `_italic_`) — no CDN, no JS libraries, deterministic. Anything
+outside this subset degrades to a plain paragraph rather than crashing.
+
+Italics are deliberately line-level only (WI-088 review): briefings are
+saturated with snake_case (`risk_on`, `already_held`, family names), and an
+inline underscore rule mangled them all — while every REAL italic use in
+`briefing/render.py` is a whole line (the provenance footer, `_no data..._`,
+`_Eligible signal families:_`). Inline underscores stay literal."""
 
 from __future__ import annotations
 
@@ -10,13 +15,13 @@ import html
 import re
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
-_ITALIC = re.compile(r"(?<!_)_([^_]+)_(?!_)")
+_CODE = re.compile(r"`([^`]+)`")
 
 
 def _inline(text: str) -> str:
     text = html.escape(text)
     text = _BOLD.sub(r"<b>\1</b>", text)
-    return _ITALIC.sub(r"<i>\1</i>", text)
+    return _CODE.sub(r"<code>\1</code>", text)
 
 
 def render_markdown(text: str) -> str:
@@ -25,13 +30,14 @@ def render_markdown(text: str) -> str:
     i = 0
     while i < len(lines):
         line = lines[i]
+        stripped = line.strip()
         if line.startswith("### "):
             out.append(f"<h3>{_inline(line[4:])}</h3>")
         elif line.startswith("## "):
             out.append(f"<h2>{_inline(line[3:])}</h2>")
         elif line.startswith("# "):
             out.append(f"<h1>{_inline(line[2:])}</h1>")
-        elif line.strip() == "---":
+        elif stripped == "---":
             out.append("<hr>")
         elif (
             line.startswith("|")
@@ -50,7 +56,10 @@ def render_markdown(text: str) -> str:
             continue
         elif line.startswith("- "):
             out.append(f"<li>{_inline(line[2:])}</li>")
-        elif line.strip() == "":
+        elif stripped.startswith("_") and stripped.endswith("_") and len(stripped) > 2:
+            # whole-line italic — the only italic form briefings actually use
+            out.append(f"<p><i>{_inline(stripped[1:-1])}</i></p>")
+        elif stripped == "":
             out.append("")
         else:
             out.append(f"<p>{_inline(line)}</p>")
