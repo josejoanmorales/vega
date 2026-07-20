@@ -26,6 +26,7 @@ price, percentage, or statistic from memory.
 | `src/vega/briefing/calls.py` — ranked calls, entries only | WI-067 | shipped |
 | `src/vega/execution/exits.py`, `lifecycle/live_trades.py` — exit monitor + auto-demotion | WI-087 | shipped |
 | `src/vega/run/`, `src/vega/web/` — locked pipeline entry + local web UI | WI-088 | shipped |
+| `src/vega/web/dashboard.py` — positions/signal-health/failures/symbol inspector | WI-089 | shipped |
 
 ## Data layer (WI-058)
 
@@ -533,6 +534,47 @@ Live re-run proof after the fixes: header-less and cross-origin POSTs both rejec
 (audited), a legitimate UI run succeeded and was attributed in the audit log, the briefing
 rendered with snake_case intact, and the ledger still held exactly 4 positions (zero
 duplicates). 294 tests (was 283), verify.sh green.
+
+## Dashboard: positions, signal health, failures, symbol inspector (WI-089)
+
+Extends WI-088's Run button into the daily monitoring surface. Everything in
+`src/vega/web/dashboard.py` is strictly read-only — no code path writes to the ledger or
+the lifecycle registry — and every view reuses the EXACT production reconstruction, never
+a parallel read-model:
+
+- **`GET /api/positions`**: `exits.reconstruct_positions` — the same call the exit monitor
+  makes — rendered as a table with a sessions-to-time-stop countdown.
+- **`GET /api/signal-health`**: required a real extraction. `lifecycle/live_trades.py`'s
+  `check_and_apply_demotions` computed AND applied demotions in one function; a page
+  refresh must never demote. Split into a pure `evaluate_demotions()` (verdicts only) and
+  a thin `check_and_apply_demotions()` that calls it then acts — behavior-preserving,
+  guarded by the existing test suite (all passed unchanged). The dashboard calls only the
+  pure half.
+- **`GET /api/failures`**: `execution.executor.read_failures()`, newest first.
+- **`GET /api/inspect/{symbol}`**: the read-only symbol inspector. Validates against the
+  committed universe (404 if unknown); reuses the newly-public `briefing.calls.
+  eligible_families` to instantiate each paper-live+ signal at its exact
+  `justifying_params` and scan just that symbol (fires today or not, with the thesis);
+  reconstructs position status from the same source as `/api/positions`; checks
+  `risk.gates.check_all_gates` against the real regime (`briefing.engine.assemble()`,
+  identical to what the briefing itself computes) and a real `EarningsFact.lookup` at the
+  network edge. Every response carries an explicit "read-only" notice, structurally true
+  by construction (no ledger/lifecycle handle exists in the call path).
+- **Two real CWD-relative bugs surfaced by the live smoke, not by review**: `data.universe.
+  load_universe` and `regime.calendar`'s macro-artifact default both used bare relative
+  paths (`Path("data/...")`) — the exact fragility class `common/paths.py` was created to
+  close for other modules, but never applied here because every prior caller happened to
+  always run via `uv run python -m vega.X` from the repo root. A long-running web server is
+  the first caller that doesn't; both defaults are now anchored via `common.paths.DATA_ROOT`.
+- **Live smoke (2026-07-20, real browser, real store/ledger/lifecycle)**: positions table
+  showed all 4 real positions correctly (CDW/CSCO held with live sessions-held counts,
+  ALL/C correctly flagged `unconfirmed`); signal health showed `oversold_reversion_v1`
+  paper-live with 0 live trades (correct — no exits yet) and `would_demote: no`; the
+  inspector answered CDW (held, signal correctly not firing, earnings gate **failing
+  closed live** on an unresolved real yfinance lookup) and MSFT (not held, earnings gate
+  **correctly blocking** on a real upcoming earnings date, 2026-07-29) — two genuinely
+  different, correct real answers. Ledger and lifecycle files were byte-identical
+  (checksum AND mtime) before and after the full page browse plus both inspections.
 
 ## Verification gate
 

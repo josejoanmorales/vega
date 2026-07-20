@@ -102,22 +102,20 @@ class DemotionOutcome:
     verdict: DemotionVerdict
 
 
-def check_and_apply_demotions(
+def evaluate_demotions(
     ledger: LedgerStore,
     calendar: list[str],
     lifecycle: LifecycleRegistry,
     backtest_registry: BacktestRegistry,
     as_of: str,
-    actor: str = "agent:exit-monitor",
 ) -> list[DemotionOutcome]:
-    """Evaluate every paper-live+ family's real live track record against its
-    justifying backtest band, and demote (agent-legal, `automatic=True` — the
-    lifecycle contract requires only PROMOTION to be human-gated) the moment
-    the evidence says so. `calendar` must be the FULL live-history session
-    grid (see module docstring). A family trading more than one asset-class
-    sleeve is evaluated per sleeve (`live_sharpe`'s own contract), demoted at
-    most once per run even if multiple sleeves qualify (a second `demote()`
-    call on an already-demoted family would raise — state changed under it)."""
+    """PURE: every paper-live+ family's real live track record against its
+    justifying backtest band, per asset-class sleeve — verdicts only, no
+    lifecycle write (WI-089: the dashboard needs to SHOW signal health on a
+    page refresh without ever demoting anything; a page load is not a
+    governance act). `calendar` must be the FULL live-history session grid
+    (see module docstring). `check_and_apply_demotions` is the only caller
+    that may act on `verdict.should_demote`."""
     trades_by_family = closed_round_trips(ledger, calendar)
     session_dates = [d for d in calendar if d <= as_of]
 
@@ -139,13 +137,36 @@ def check_and_apply_demotions(
         if not by_sleeve:
             by_sleeve = {"": []}  # still surface an insufficient_sample verdict
 
-        demote_reasons = []
         for sleeve, sleeve_trades in by_sleeve.items():
             verdict = check_auto_demotion(sleeve_trades, run, session_dates)
             outcomes.append(DemotionOutcome(family=family, asset_class=sleeve, verdict=verdict))
-            if verdict.should_demote:
-                demote_reasons.append(f"{sleeve or 'n/a'}: {verdict.reason}")
-        if demote_reasons:
-            lifecycle.demote(family, actor=actor, reason="; ".join(demote_reasons), automatic=True)
+
+    return outcomes
+
+
+def check_and_apply_demotions(
+    ledger: LedgerStore,
+    calendar: list[str],
+    lifecycle: LifecycleRegistry,
+    backtest_registry: BacktestRegistry,
+    as_of: str,
+    actor: str = "agent:exit-monitor",
+) -> list[DemotionOutcome]:
+    """Evaluate (via `evaluate_demotions`) and demote (agent-legal,
+    `automatic=True` — the lifecycle contract requires only PROMOTION to be
+    human-gated) the moment the evidence says so. A family trading more than
+    one asset-class sleeve is demoted at most once per run even if multiple
+    sleeves qualify (a second `demote()` call on an already-demoted family
+    would raise — state changed under it)."""
+    outcomes = evaluate_demotions(ledger, calendar, lifecycle, backtest_registry, as_of)
+
+    demote_reasons_by_family: dict[str, list[str]] = {}
+    for o in outcomes:
+        if o.verdict.should_demote:
+            demote_reasons_by_family.setdefault(o.family, []).append(
+                f"{o.asset_class or 'n/a'}: {o.verdict.reason}"
+            )
+    for family, reasons in demote_reasons_by_family.items():
+        lifecycle.demote(family, actor=actor, reason="; ".join(reasons), automatic=True)
 
     return outcomes

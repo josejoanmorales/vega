@@ -18,6 +18,12 @@
   hr { border: none; border-top: 1px solid #ddd; margin: 1rem 0; }
   #briefing { margin-top: 1.5rem; }
   .dim { color: #777; }
+  section { margin-top: 1.5rem; }
+  section h2 { font-size: 1.05rem; margin-bottom: 0.4rem; }
+  input#inspect-input { font-size: 0.95rem; padding: 0.3rem; width: 8rem; text-transform: uppercase; }
+  .flag-yes { color: #b00; font-weight: bold; }
+  .flag-no { color: #2a2; }
+  .notice { font-style: italic; color: #555; margin-top: 0.4rem; }
 </style>
 </head>
 <body>
@@ -26,6 +32,30 @@
   <button id="run-btn">Run pipeline now</button>
   <div id="status-line" class="dim">idle</div>
   <pre id="log-tail" style="display:none"></pre>
+
+  <hr>
+
+  <section>
+    <h2>Open positions</h2>
+    <div id="positions"></div>
+  </section>
+
+  <section>
+    <h2>Signal health</h2>
+    <div id="signal-health"></div>
+  </section>
+
+  <section>
+    <h2>Execution failures</h2>
+    <div id="failures"></div>
+  </section>
+
+  <section>
+    <h2>Symbol inspector</h2>
+    <input id="inspect-input" placeholder="e.g. CDW" maxlength="10">
+    <button id="inspect-btn">Inspect</button>
+    <div id="inspect-result"></div>
+  </section>
 
   <hr>
 
@@ -120,10 +150,111 @@ async function loadBriefing(date) {
 
 datePicker.addEventListener('change', () => loadBriefing(datePicker.value));
 
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+async function loadPositions() {
+  const rows = await (await fetch('/api/positions')).json();
+  const div = document.getElementById('positions');
+  if (!rows.length) { div.innerHTML = '<p class="dim">no open positions</p>'; return; }
+  let html = '<table><tr><th>symbol</th><th>qty</th><th>entry</th><th>stop</th>' +
+    '<th>sessions held</th><th>sessions to time stop</th><th>status</th></tr>';
+  for (const p of rows) {
+    const status = p.is_pending ? 'pending' : (p.entry_confirmed ? 'held' : 'unconfirmed');
+    const toStop = p.sessions_until_time_stop === null ? '—' : p.sessions_until_time_stop;
+    html += `<tr><td>${escapeHtml(p.symbol)}</td><td>${p.qty.toFixed(4)}</td>` +
+      `<td>${p.entry_price.toFixed(2)}</td><td>${p.current_stop_price.toFixed(2)}</td>` +
+      `<td>${p.sessions_held}/${p.time_stop_sessions}</td><td>${toStop}</td><td>${status}</td></tr>`;
+  }
+  div.innerHTML = html + '</table>';
+}
+
+async function loadSignalHealth() {
+  const rows = await (await fetch('/api/signal-health')).json();
+  const div = document.getElementById('signal-health');
+  if (!rows.length) { div.innerHTML = '<p class="dim">no eligible families</p>'; return; }
+  let html = '<table><tr><th>family</th><th>sleeve</th><th>state</th><th>live trades</th>' +
+    '<th>live Sharpe</th><th>band</th><th>would demote</th></tr>';
+  for (const s of rows) {
+    const sharpe = s.live_sharpe === null ? '—' : s.live_sharpe.toFixed(2);
+    const band = s.band ? `[${s.band[0].toFixed(2)}, ${s.band[1].toFixed(2)}]` : '—';
+    const flag = s.would_demote
+      ? `<span class="flag-yes">yes — ${escapeHtml(s.reason)}</span>`
+      : `<span class="flag-no">no</span>`;
+    html += `<tr><td>${escapeHtml(s.family)}</td><td>${escapeHtml(s.asset_class || '—')}</td>` +
+      `<td>${escapeHtml(s.state)}</td><td>${s.n_trades}</td><td>${sharpe}</td>` +
+      `<td>${band}</td><td>${flag}</td></tr>`;
+  }
+  div.innerHTML = html + '</table>';
+}
+
+async function loadFailures() {
+  const rows = await (await fetch('/api/failures')).json();
+  const div = document.getElementById('failures');
+  if (!rows.length) { div.innerHTML = '<p class="dim">no unresolved failures</p>'; return; }
+  let html = '<table><tr><th>at</th><th>symbol</th><th>error</th></tr>';
+  for (const f of rows) {
+    html += `<tr><td>${escapeHtml(f.at)}</td><td>${escapeHtml(f.symbol)}</td><td>${escapeHtml(f.error)}</td></tr>`;
+  }
+  div.innerHTML = html + '</table>';
+}
+
+document.getElementById('inspect-btn').addEventListener('click', async () => {
+  const input = document.getElementById('inspect-input');
+  const div = document.getElementById('inspect-result');
+  const symbol = input.value.trim().toUpperCase();
+  if (!symbol) return;
+  div.innerHTML = '<p class="dim">looking up…</p>';
+  const res = await fetch(`/api/inspect/${encodeURIComponent(symbol)}`);
+  if (res.status === 404) {
+    const body = await res.json();
+    div.innerHTML = `<p class="dim">${escapeHtml(body.error)}</p>`;
+    return;
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: 'unknown error' }));
+    div.innerHTML = `<p class="dim">error: ${escapeHtml(body.error)}</p>`;
+    return;
+  }
+  const d = await res.json();
+  let html = `<p><b>${escapeHtml(d.symbol)}</b> (${escapeHtml(d.asset_class)}) as of ${escapeHtml(d.as_of)}</p>`;
+  if (d.position) {
+    html += `<p>Position: ${d.position.pending ? 'pending' : 'held'}, qty ${d.position.qty.toFixed(4)}` +
+      (d.position.in_flight_sell_qty ? `, ${d.position.in_flight_sell_qty.toFixed(4)} in-flight sell` : '') +
+      `, sessions held ${d.position.sessions_held}/${d.position.time_stop_sessions}</p>`;
+  } else {
+    html += '<p>Position: not held</p>';
+  }
+  if (d.signals.length) {
+    html += '<p>Signals:</p><ul>';
+    for (const s of d.signals) {
+      html += `<li>${escapeHtml(s.family)} (${escapeHtml(s.state)}): ` +
+        (s.fires_today ? `<b>fires today</b> — ${escapeHtml(s.thesis)}` : 'does not fire today') +
+        '</li>';
+    }
+    html += '</ul>';
+  } else {
+    html += '<p>Signals: no eligible families</p>';
+  }
+  html += `<p>Gates: earnings ${escapeHtml(d.gates.earnings_status)}, ` +
+    (d.gates.blocked
+      ? `<span class="flag-yes">blocked — ${escapeHtml(d.gates.reason)}: ${escapeHtml(d.gates.detail)}</span>`
+      : '<span class="flag-no">clear</span>') +
+    '</p>';
+  html += `<p class="notice">${escapeHtml(d.read_only_notice)}</p>`;
+  div.innerHTML = html;
+});
+
 (async () => {
   const s = await refreshStatus();
   if (s.state === 'running') startPolling();
   await loadBriefingList();
+  await loadPositions();
+  await loadSignalHealth();
+  await loadFailures();
 })();
 </script>
 </body>

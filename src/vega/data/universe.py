@@ -9,9 +9,15 @@ import csv
 import re
 from pathlib import Path
 
+from vega.common.paths import DATA_ROOT
 from vega.data.types import ASSET_CLASSES, UniverseEntry
 
-DEFAULT_ARTIFACT = Path("data/universe/universe-v1.csv")
+# Anchored via common.paths (WI-089 live smoke: a long-running server process
+# invoked outside the repo root — unlike every prior CLI caller, which always
+# ran via `uv run python -m vega.X` from the repo root by convention — hit
+# this the moment a CWD-relative default was used from anywhere else. Same
+# fragility class common/paths.py was created to close for other modules.
+DEFAULT_ARTIFACT = DATA_ROOT / "universe" / "universe-v1.csv"
 
 
 def load_universe(path: Path = DEFAULT_ARTIFACT) -> list[UniverseEntry]:

@@ -14,7 +14,13 @@ from pathlib import Path
 
 import yfinance as yf
 
-DEFAULT_ARTIFACT = Path("data/calendar/macro-v1.csv")
+from vega.common.paths import DATA_ROOT
+
+# Anchored via common.paths (same CWD-relative fragility class as
+# data/universe.py's DEFAULT_ARTIFACT — a WI-089 live smoke against a
+# long-running server process, not a `uv run` CLI invocation from the repo
+# root, is what surfaced both).
+DEFAULT_ARTIFACT = DATA_ROOT / "calendar" / "macro-v1.csv"
 
 
 @dataclass(frozen=True)

@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from vega.common.paths import DATA_ROOT
+from vega.web import dashboard
 from vega.web.markdown import render_markdown
 from vega.web.runner import RunAlreadyInProgress, Runner
 
@@ -34,6 +35,7 @@ BRIEFINGS_DIR = DATA_ROOT / "briefings"
 AUDIT_LOG = DATA_ROOT / "web-runs" / "audit.log"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BRIEFING_PATH_RE = re.compile(r"^/api/briefings/(\d{4}-\d{2}-\d{2})$")
+INSPECT_PATH_RE = re.compile(r"^/api/inspect/([A-Za-z0-9.\-]{1,10})$")
 ALLOWED_HOSTS_RE = re.compile(r"^(127\.0\.0\.1|localhost)(:\d+)?$")
 ALLOWED_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$")
 
@@ -103,14 +105,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, runner.status())
             if path == "/api/briefings":
                 return self._send(200, _list_briefing_dates())
+            if path == "/api/positions":
+                return self._send(200, dashboard.positions())
+            if path == "/api/signal-health":
+                return self._send(200, dashboard.signal_health())
+            if path == "/api/failures":
+                return self._send(200, dashboard.failures())
             m = BRIEFING_PATH_RE.match(path)
             if m:
-                date = m.group(1)  # regex-validated: date-shaped only, no traversal
-                file_path = BRIEFINGS_DIR / f"{date}.md"
+                briefing_date = m.group(1)  # regex-validated: date-shaped only, no traversal
+                file_path = BRIEFINGS_DIR / f"{briefing_date}.md"
                 if not file_path.is_file():
                     return self._send(404, {"error": "not found"})
                 text = file_path.read_text()
-                return self._send(200, {"date": date, "html": render_markdown(text)})
+                return self._send(200, {"date": briefing_date, "html": render_markdown(text)})
+            m = INSPECT_PATH_RE.match(path)
+            if m:
+                symbol = m.group(1).upper()
+                try:
+                    return self._send(200, dashboard.inspect_symbol(symbol))
+                except dashboard.SymbolNotInUniverse:
+                    return self._send(404, {"error": f"{symbol!r} is not in the tradable universe"})
             self._send(404, {"error": "not found"})
         except Exception as exc:  # noqa: BLE001 — never crash the handler thread
             self._error(exc)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from vega.web import dashboard
 from vega.web import server as server_module
 from vega.web.runner import Runner
 from vega.web.server import Handler
@@ -143,3 +144,58 @@ def test_run_attempts_are_audited(live_server: int, tmp_path: Path, monkeypatch)
     assert lines[0]["outcome"] == "started: audited-run"
     assert "rejected" in lines[1]["outcome"]
     assert all("at" in ln and "client" in ln for ln in lines)
+
+
+# ---- WI-089 dashboard endpoints ---------------------------------------------
+
+
+def test_positions_endpoint_delegates_to_dashboard(live_server: int, monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "positions", lambda ledger=None: [{"symbol": "AAA"}])
+    status, body = _get(live_server, "/api/positions")
+    assert status == 200 and body == [{"symbol": "AAA"}]
+
+
+def test_signal_health_endpoint_delegates_to_dashboard(live_server: int, monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "signal_health", lambda ledger=None: [{"family": "f"}])
+    status, body = _get(live_server, "/api/signal-health")
+    assert status == 200 and body == [{"family": "f"}]
+
+
+def test_failures_endpoint_delegates_to_dashboard(live_server: int, monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "failures", lambda: [{"symbol": "BBB"}])
+    status, body = _get(live_server, "/api/failures")
+    assert status == 200 and body == [{"symbol": "BBB"}]
+
+
+def test_inspect_endpoint_returns_dashboard_result(live_server: int, monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "inspect_symbol", lambda symbol, ledger=None: {"symbol": symbol})
+    status, body = _get(live_server, "/api/inspect/CDW")
+    assert status == 200 and body == {"symbol": "CDW"}
+
+
+def test_inspect_endpoint_uppercases_symbol(live_server: int, monkeypatch) -> None:
+    seen = {}
+
+    def _fake(symbol: str, ledger=None) -> dict:
+        seen["symbol"] = symbol
+        return {"symbol": symbol}
+
+    monkeypatch.setattr(dashboard, "inspect_symbol", _fake)
+    _get(live_server, "/api/inspect/cdw")
+    assert seen["symbol"] == "CDW"
+
+
+def test_inspect_unknown_symbol_returns_404(live_server: int, monkeypatch) -> None:
+    def _raise(symbol: str, ledger=None) -> dict:
+        raise dashboard.SymbolNotInUniverse(symbol)
+
+    monkeypatch.setattr(dashboard, "inspect_symbol", _raise)
+    status, body = _get(live_server, "/api/inspect/ZZZZ")
+    assert status == 404
+    assert "not in the tradable universe" in body["error"]
+
+
+def test_inspect_path_rejects_unexpected_characters(live_server: int) -> None:
+    # INSPECT_PATH_RE only allows alnum/./- -- path traversal or injection 404s
+    status, _ = _get(live_server, "/api/inspect/../../etc/passwd")
+    assert status == 404

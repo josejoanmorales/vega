@@ -130,9 +130,13 @@ def load_signal_frame(as_of: str, root: Path = snapshot.DATA_ROOT) -> pd.DataFra
         con.close()
 
 
-def _eligible_families(
+def eligible_families(
     lifecycle: LifecycleRegistry, backtest_registry: BacktestRegistry
 ) -> list[EligibleFamily]:
+    """Every `paper-live`/`trusted` family with its justifying parameterization
+    — public (WI-089: the symbol inspector reuses this exact eligibility logic
+    rather than re-deriving it, the same anti-duplication discipline as
+    `exits.reconstruct_positions`)."""
     runs_by_id = {r["run_id"]: r for r in backtest_registry.runs()}
     out = []
     for family in lifecycle.families():
@@ -218,7 +222,7 @@ def build_calls(
     lifecycle = lifecycle or LifecycleRegistry()
     backtest_registry = backtest_registry or BacktestRegistry()
 
-    eligible = _eligible_families(lifecycle, backtest_registry)
+    eligible = eligible_families(lifecycle, backtest_registry)
     if not eligible:
         return CallsResult(
             as_of=as_of, eligible_families=(), calls=(), rejections=(), no_trade_reason=None
