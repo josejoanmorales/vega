@@ -27,12 +27,12 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import pandas as pd
 
 from vega.backtest.market_view import MarketView
 from vega.backtest.registry import BacktestRegistry
 from vega.backtest.signals import EntryProposal, Signal
+from vega.common import db
 from vega.data import snapshot
 from vega.data.types import UniverseEntry
 from vega.data.universe import load_universe
@@ -119,15 +119,12 @@ def load_signal_frame(as_of: str, root: Path = snapshot.DATA_ROOT) -> pd.DataFra
     contract before pandas ever sees a row, and the lookback floor keeps the
     frame O(lookback) instead of O(store history) as the store grows."""
     floor = (date.fromisoformat(as_of) - timedelta(days=FRAME_LOOKBACK_CALENDAR_DAYS)).isoformat()
-    con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
-    try:
+    with db.connect(root) as con:
         return con.execute(
             "SELECT symbol, date, open, close, high, low, adj_close, volume "
             "FROM bars WHERE source = 'yfinance' AND date <= ? AND date >= ?",
             [as_of, floor],
         ).df()
-    finally:
-        con.close()
 
 
 def eligible_families(

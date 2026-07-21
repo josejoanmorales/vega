@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
+
+from vega.data import snapshot
+from vega.regime.inputs import fetch_fear_greed, fetch_vix
 
 # VIX bands — dumb on purpose, constants not parameters
 VIX_CALM = 15.0
@@ -104,3 +108,16 @@ def compute_regime(
         crypto_fg=crypto_fg,
         composite=composite,
     )
+
+
+def assemble_regime(
+    spy: pd.DataFrame, universe_bars: pd.DataFrame, root: Path = snapshot.DATA_ROOT
+) -> RegimeState:
+    """Fetch the two live-only inputs (VIX, crypto fear/greed) and compute the
+    regime from them plus already-loaded store data (WI-084: this fetch+fetch+
+    compute triplet was hand-copied across briefing.engine.assemble,
+    risk.__main__, and regime.__main__ — one assembly path now, callers only
+    differ in how they load `spy`/`universe_bars` from the store)."""
+    vix = fetch_vix(days=300, root=root)
+    fng = fetch_fear_greed(limit=30, root=root)
+    return compute_regime(spy, vix, universe_bars, crypto_fg=int(fng["value"].iloc[-1]))

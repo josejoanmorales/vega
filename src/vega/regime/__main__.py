@@ -7,30 +7,23 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import duckdb
-
+from vega.common import db
 from vega.data import snapshot
 from vega.regime.calendar import macro_events_within
-from vega.regime.inputs import fetch_fear_greed, fetch_vix
-from vega.regime.regime import compute_regime
+from vega.regime.regime import assemble_regime
 
 
 def main() -> None:
-    vix = fetch_vix(days=300)
-    fng = fetch_fear_greed(limit=30)
-
-    con = duckdb.connect(str(snapshot.DATA_ROOT / "vega.duckdb"), read_only=True)
-    try:
+    root = snapshot.DATA_ROOT
+    with db.connect(root) as con:
         universe_bars = con.execute(
             "SELECT symbol, date, adj_close FROM bars WHERE source = 'yfinance'"
         ).df()
         spy = con.execute(
             "SELECT date, adj_close FROM bars WHERE symbol = 'SPY' ORDER BY date"
         ).df()
-    finally:
-        con.close()
 
-    state = compute_regime(spy, vix, universe_bars, crypto_fg=int(fng["value"].iloc[-1]))
+    state = assemble_regime(spy, universe_bars, root=root)
     print(state)
     upcoming = macro_events_within(datetime.now(UTC).date(), days_ahead=14)
     for event in upcoming:

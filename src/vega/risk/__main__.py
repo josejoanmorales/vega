@@ -9,15 +9,14 @@ from __future__ import annotations
 
 from datetime import date
 
-import duckdb
 import pandas as pd
 from dotenv import load_dotenv
 
+from vega.common import db
 from vega.data import snapshot
 from vega.execution.executor import live_account_equity
 from vega.regime.calendar import macro_events_within
-from vega.regime.inputs import fetch_fear_greed, fetch_vix
-from vega.regime.regime import compute_regime
+from vega.regime.regime import assemble_regime
 from vega.risk.engine import open_position_heat, propose, to_recommendation
 from vega.risk.gates import EarningsFact
 from vega.risk.heat import OpenPositionHeat
@@ -29,25 +28,18 @@ CANDIDATES = [("AAPL", "equity"), ("BTC", "crypto")]
 def main() -> None:
     load_dotenv()
     root = snapshot.DATA_ROOT
-    con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
-    try:
+    with db.connect(root) as con:
         frame = con.execute(
             "SELECT symbol, date, source, close, high, low, adj_close FROM bars"
         ).df()
         row = con.execute("SELECT max(date) FROM bars").fetchone()
         assert row is not None and row[0] is not None  # noqa: S101 — store is non-empty by now
         as_of: str = row[0]
-    finally:
-        con.close()
 
     equity = live_account_equity()
-    vix = fetch_vix(days=300)
-    fng = fetch_fear_greed(limit=30)
     yf_frame = frame[frame["source"] == "yfinance"]
     spy = yf_frame[yf_frame["symbol"] == "SPY"][["date", "adj_close"]]
-    regime = compute_regime(
-        spy, vix, yf_frame[["symbol", "date", "adj_close"]], crypto_fg=int(fng["value"].iloc[-1])
-    )
+    regime = assemble_regime(spy, yf_frame[["symbol", "date", "adj_close"]])
 
     print(f"equity: ${equity:,.2f} | regime: {regime.composite} (as_of {regime.as_of})")
     for e in macro_events_within(date.fromisoformat(as_of), days_ahead=14):

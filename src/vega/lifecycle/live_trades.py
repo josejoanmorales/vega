@@ -20,10 +20,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import duckdb
-
 from vega.backtest.live_metrics import LiveTrade
 from vega.backtest.registry import BacktestRegistry
+from vega.common import db
 from vega.data import snapshot
 from vega.execution.exits import entry_session_for
 from vega.ledger.store import LedgerStore
@@ -34,15 +33,11 @@ from vega.lifecycle.lifecycle import LifecycleRegistry, is_eligible_state
 def full_session_calendar(root: Path = snapshot.DATA_ROOT) -> list[str]:
     """Every yfinance session in the ENTIRE store, sorted — the live track
     record's time axis. Deliberately unwindowed: it must cover the oldest
-    round trip forever (duckdb-connect boilerplate consolidation is parked on
-    WI-084)."""
-    con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
-    try:
+    round trip forever."""
+    with db.connect(root) as con:
         rows = con.execute(
             "SELECT DISTINCT date FROM bars WHERE source = 'yfinance' ORDER BY date"
         ).fetchall()
-    finally:
-        con.close()
     return [str(r[0]) for r in rows]
 
 

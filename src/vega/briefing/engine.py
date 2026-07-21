@@ -7,17 +7,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import pandas as pd
 
 from vega.briefing.calls import EligibleFamily, RenderedCall, RenderedRejection
+from vega.common import db
 from vega.data import snapshot
 from vega.execution.executor import read_failures
 from vega.execution.exits import ExitDecision
 from vega.lifecycle.live_trades import DemotionOutcome
 from vega.regime.calendar import MacroEvent, macro_events_within
-from vega.regime.inputs import fetch_fear_greed, fetch_vix
-from vega.regime.regime import RegimeState, compute_regime
+from vega.regime.regime import RegimeState, assemble_regime
 
 
 @dataclass(frozen=True)
@@ -73,8 +72,7 @@ def top_movers(bars: pd.DataFrame) -> pd.DataFrame:
 
 
 def assemble(root: Path = snapshot.DATA_ROOT) -> BriefingData:
-    con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
-    try:
+    with db.connect(root) as con:
         equity_bars = con.execute(
             "SELECT symbol, date, adj_close FROM bars WHERE source = 'yfinance'"
         ).df()
@@ -88,12 +86,8 @@ def assemble(root: Path = snapshot.DATA_ROOT) -> BriefingData:
         quarantined_today = con.execute(
             "SELECT count(*) FROM quarantine WHERE date = (SELECT max(date) FROM bars)"
         ).fetchone()[0]  # type: ignore[index]
-    finally:
-        con.close()
 
-    vix = fetch_vix(days=300, root=root)
-    fng = fetch_fear_greed(limit=30, root=root)
-    regime = compute_regime(spy, vix, equity_bars, crypto_fg=int(fng["value"].iloc[-1]))
+    regime = assemble_regime(spy, equity_bars, root=root)
 
     return BriefingData(
         as_of=str(store_max),

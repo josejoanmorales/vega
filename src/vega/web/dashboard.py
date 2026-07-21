@@ -12,12 +12,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-import duckdb
-
 from vega.backtest.market_view import MarketView
 from vega.backtest.registry import BacktestRegistry
 from vega.briefing.calls import FAMILY_SIGNALS, eligible_families, load_signal_frame
 from vega.briefing.engine import assemble
+from vega.common import db
 from vega.common.doctrine import DEFAULT_TIME_STOP_SESSIONS
 from vega.data import snapshot
 from vega.data.universe import load_universe
@@ -34,11 +33,8 @@ class SymbolNotInUniverse(ValueError):
 
 
 def _max_session(root: Path = snapshot.DATA_ROOT) -> str:
-    con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
-    try:
+    with db.connect(root) as con:
         row = con.execute("SELECT max(date) FROM bars WHERE source = 'yfinance'").fetchone()
-    finally:
-        con.close()
     return str(row[0]) if row and row[0] is not None else ""
 
 

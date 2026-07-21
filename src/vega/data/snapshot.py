@@ -14,9 +14,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import duckdb
 import pandas as pd
 
+from vega.common import db
 from vega.common.paths import DATA_ROOT as DATA_ROOT  # project-anchored, never CWD-relative
 from vega.data.types import SnapshotConflictError
 
@@ -142,8 +142,7 @@ def refresh_catalog(root: Path = DATA_ROOT) -> None:
         "bars": "clean/*/bars_*.parquet",
         "quarantine": "clean/*/quarantine_*.parquet",
     }
-    con = duckdb.connect(str(root / "vega.duckdb"))
-    try:
+    with db.connect(root, read_only=False) as con:
         for view, pattern in views.items():
             if not list(root.glob(pattern)):
                 continue
@@ -153,5 +152,3 @@ def refresh_catalog(root: Path = DATA_ROOT) -> None:
                 f"CREATE OR REPLACE VIEW {view} AS "  # noqa: S608
                 f"SELECT * FROM read_parquet('{glob}', union_by_name=true)"
             )
-    finally:
-        con.close()

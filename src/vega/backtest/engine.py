@@ -10,7 +10,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import pandas as pd
 
 from vega.backtest.folds import split_dev_holdout, walk_forward_folds
@@ -18,6 +17,7 @@ from vega.backtest.metrics import FoldMetrics, aggregate_metrics, compute_fold_m
 from vega.backtest.registry import BacktestRegistry, RunRecord
 from vega.backtest.signals import Signal
 from vega.backtest.simulate import simulate_signal
+from vega.common import db
 from vega.data import snapshot
 from vega.data.universe import universe_version
 from vega.lifecycle.rationale import RationaleSource
@@ -44,15 +44,12 @@ class BacktestReport:
 
 
 def _load_bars(symbols: list[str], source: str, root: Path) -> pd.DataFrame:
-    con = duckdb.connect(str(root / "vega.duckdb"), read_only=True)
-    try:
+    with db.connect(root) as con:
         placeholders = ",".join(f"'{s}'" for s in symbols)
         return con.execute(
             f"SELECT * FROM bars WHERE source = ? AND symbol IN ({placeholders})",  # noqa: S608
             [source],
         ).df()
-    finally:
-        con.close()
 
 
 def run_backtest(
