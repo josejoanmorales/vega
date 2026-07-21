@@ -29,20 +29,9 @@ class MarketView:
             for symbol, group in frame.groupby("symbol")
         }
 
-    @classmethod
-    def _from_groups(cls, by_symbol: dict[str, pd.DataFrame], as_of: str) -> MarketView:
-        view = cls.__new__(cls)
-        view._as_of = as_of
-        view._by_symbol = by_symbol
-        return view
-
     @property
     def as_of(self) -> str:
         return self._as_of
-
-    def with_as_of(self, as_of: str) -> MarketView:
-        """New view over the same pre-grouped data at a different cutoff."""
-        return MarketView._from_groups(self._by_symbol, as_of)
 
     def bars(self, symbol: str, lookback: int | None = None) -> pd.DataFrame:
         group = self._by_symbol.get(symbol)
