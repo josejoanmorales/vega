@@ -14,7 +14,21 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+
+class _CacheEntry(NamedTuple):
+    mtime_ns: int
+    size: int
+    records: list[dict[str, Any]]
+
+
+# Keyed by resolved path, not per-instance: call sites routinely construct a
+# fresh Store/Registry (and therefore a fresh AppendLog) per call, so an
+# instance-level cache would never hit. (mtime_ns, size)-checked so a write
+# from ANY process invalidates it automatically — no explicit invalidation
+# hook needed on append().
+_CACHE: dict[Path, _CacheEntry] = {}
 
 
 class AppendLog:
@@ -39,8 +53,19 @@ class AppendLog:
     def records(self) -> list[dict[str, Any]]:
         if not self._path.exists():
             return []
+        resolved = self._path.resolve()
+        stat = self._path.stat()
+        cached = _CACHE.get(resolved)
+        if (
+            cached is not None
+            and cached.mtime_ns == stat.st_mtime_ns
+            and cached.size == stat.st_size
+        ):
+            return list(cached.records)
         with self._path.open() as fh:
-            return [json.loads(line) for line in fh]
+            records = [json.loads(line) for line in fh]
+        _CACHE[resolved] = _CacheEntry(stat.st_mtime_ns, stat.st_size, records)
+        return list(records)
 
     def records_of_type(self, kind: str) -> list[dict[str, Any]]:
         # r["type"], not r.get("type"): a record missing its type is corruption and
