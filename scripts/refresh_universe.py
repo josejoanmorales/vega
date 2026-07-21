@@ -25,6 +25,23 @@ UA = {"User-Agent": "vega-universe-refresh/0.1"}
 MIN_MEDIAN_DOLLAR_VOLUME = 20_000_000
 CRYPTO_COUNT = 20
 
+# Sleeve for risk.clusters heat-cap classification (universe-v2+, WI-084 item 8).
+# Every equity/ETF not listed here defaults to us_equity_beta -- rates/commodities
+# must be explicit, never guessed (mirrors risk.clusters.classify's fallback).
+RATES_ETFS = {"TLT", "IEF"}
+COMMODITIES_ETFS = {"GLD", "SLV", "USO", "XME"}
+
+
+def _cluster_for(symbol: str, asset_class: str) -> str:
+    if asset_class == "crypto":
+        return "crypto_beta"
+    if symbol in RATES_ETFS:
+        return "rates"
+    if symbol in COMMODITIES_ETFS:
+        return "commodities"
+    return "us_equity_beta"
+
+
 ETFS = [
     ("SPY", "SPDR S&P 500"),
     ("QQQ", "Invesco Nasdaq-100"),
@@ -171,14 +188,15 @@ def main() -> None:
         "# etfs: curated liquid list",
         f"# filter (equity/etf): median 60-session dollar volume >= ${MIN_MEDIAN_DOLLAR_VOLUME:,}",
         f"# crypto: CoinGecko top-{CRYPTO_COUNT} mcap, ex stable/wrapped, Binance USDT pair",
-        "symbol,asset_class,name,coingecko_id,binance_symbol",
+        "# cluster: risk.clusters heat-cap sleeve (us_equity_beta|rates|commodities|crypto_beta)",
+        "symbol,asset_class,name,coingecko_id,binance_symbol,cluster",
     ]
     for sym, name in sorted(eq.items()):
-        lines.append(f'{sym},equity,"{name}",,')
+        lines.append(f'{sym},equity,"{name}",,,{_cluster_for(sym, "equity")}')
     for sym, name in sorted(etf.items()):
-        lines.append(f'{sym},etf,"{name}",,')
+        lines.append(f'{sym},etf,"{name}",,,{_cluster_for(sym, "etf")}')
     for sym, name, cid, pair in cr:
-        lines.append(f'{sym},crypto,"{name}",{cid},{pair}')
+        lines.append(f'{sym},crypto,"{name}",{cid},{pair},crypto_beta')
     out.write_text("\n".join(lines) + "\n")
     print(f"wrote {out}: {len(eq)} equities, {len(etf)} etfs, {len(cr)} crypto")
 

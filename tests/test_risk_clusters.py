@@ -89,13 +89,15 @@ def test_contamination_threshold_and_unmeasurable_default(
     assert contaminates_equity_beta(corr) is expected
 
 
-def test_cluster_frozensets_stay_reconciled_with_the_committed_universe() -> None:
-    """Guard until cluster membership migrates onto the universe artifact
-    (universe-v2, parked): every hardcoded cluster symbol must exist in the
-    current universe, so a refresh can't silently orphan the frozensets."""
+def test_classify_matches_the_committed_universe_cluster_column() -> None:
+    """WI-084 item 8: cluster membership migrated onto the universe artifact
+    (universe-v2's `cluster` column) — classify() must agree with it for
+    every non-crypto entry, not just the formerly-hardcoded rates/commodities
+    symbols. Replaces the old guard (RATES/COMMODITIES <= universe_symbols)
+    now that there is no hardcoded frozenset left to guard."""
     from vega.data.universe import load_universe
-    from vega.risk.clusters import COMMODITIES, RATES
 
-    universe_symbols = {e.symbol for e in load_universe()}
-    assert RATES <= universe_symbols
-    assert COMMODITIES <= universe_symbols
+    for entry in load_universe():
+        if entry.asset_class == "crypto":
+            continue
+        assert classify(entry.symbol, entry.asset_class) == entry.cluster

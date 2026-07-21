@@ -11,13 +11,25 @@ from pathlib import Path
 
 from vega.common.paths import DATA_ROOT
 from vega.data.types import ASSET_CLASSES, UniverseEntry
+from vega.risk.types import CLUSTERS
 
 # Anchored via common.paths (WI-089 live smoke: a long-running server process
 # invoked outside the repo root — unlike every prior CLI caller, which always
 # ran via `uv run python -m vega.X` from the repo root by convention — hit
 # this the moment a CWD-relative default was used from anywhere else. Same
 # fragility class common/paths.py was created to close for other modules.
-DEFAULT_ARTIFACT = DATA_ROOT / "universe" / "universe-v1.csv"
+#
+# v2 (WI-084 item 8): adds the `cluster` sleeve column risk.clusters.classify
+# now reads instead of a hardcoded frozenset — no membership changed, see
+# universe-v2.csv's header comment.
+DEFAULT_ARTIFACT = DATA_ROOT / "universe" / "universe-v2.csv"
+
+# Sensible default when a row's `cluster` column is blank/absent (pre-v2
+# artifacts, or hand-written test fixtures) — mirrors risk.clusters.classify's
+# old hardcoded-frozenset fallback: crypto -> crypto_beta, everything else ->
+# us_equity_beta (rates/commodities must be explicit, never guessed).
+_DEFAULT_CLUSTER_BY_ASSET_CLASS = {"crypto": "crypto_beta"}
+_FALLBACK_CLUSTER = "us_equity_beta"
 
 
 def load_universe(path: Path = DEFAULT_ARTIFACT) -> list[UniverseEntry]:
@@ -28,12 +40,18 @@ def load_universe(path: Path = DEFAULT_ARTIFACT) -> list[UniverseEntry]:
         asset_class = rec["asset_class"].strip()
         if asset_class not in ASSET_CLASSES:
             raise ValueError(f"unknown asset_class {asset_class!r} for {rec['symbol']}")
+        cluster = (rec.get("cluster") or "").strip()
+        if not cluster:
+            cluster = _DEFAULT_CLUSTER_BY_ASSET_CLASS.get(asset_class, _FALLBACK_CLUSTER)
+        elif cluster not in CLUSTERS:
+            raise ValueError(f"unknown cluster {cluster!r} for {rec['symbol']}")
         entry = UniverseEntry(
             symbol=rec["symbol"].strip(),
             asset_class=asset_class,
             name=rec["name"].strip(),
             coingecko_id=(rec.get("coingecko_id") or "").strip(),
             binance_symbol=(rec.get("binance_symbol") or "").strip(),
+            cluster=cluster,
         )
         if entry.asset_class == "crypto" and not (entry.coingecko_id and entry.binance_symbol):
             raise ValueError(f"crypto entry {entry.symbol} is missing source mappings")

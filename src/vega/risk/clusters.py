@@ -8,30 +8,38 @@ simple trailing-window Pearson correlation on daily returns, not a model.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import pandas as pd
 
 from vega.risk.types import CLUSTERS
 
-# Cluster membership is symbol metadata and belongs on the universe artifact
-# (a `cluster` column, universe-v2 migration — parked). Until then these
-# frozensets are guarded by a test asserting every member exists in the
-# committed universe, so a refresh can't silently orphan them; unknown new
-# symbols default to us_equity_beta below (review finding).
-RATES = frozenset({"TLT", "IEF"})
-COMMODITIES = frozenset({"GLD", "SLV", "USO", "XME"})
 CORRELATION_WINDOW = 90
 CONTAMINATION_THRESHOLD = 0.5
 CONTAMINATION_FRACTION = 0.5
 
 
+@lru_cache(maxsize=1)
+def _cluster_by_symbol() -> dict[str, str]:
+    """symbol -> cluster, from the committed universe artifact's `cluster`
+    column (universe-v2, WI-084 item 8 — cluster membership used to be a
+    hardcoded RATES/COMMODITIES frozenset here; it is now symbol metadata on
+    the artifact, like every other UniverseEntry field). Cached module-level:
+    the universe is a committed, versioned file that never changes within a
+    process lifetime."""
+    from vega.data.universe import load_universe
+
+    return {e.symbol: e.cluster for e in load_universe()}
+
+
 def classify(symbol: str, asset_class: str) -> str:
     if asset_class == "crypto":
         return "crypto_beta"
-    if symbol in RATES:
-        return "rates"
-    if symbol in COMMODITIES:
-        return "commodities"
-    return "us_equity_beta"  # stated default: every other equity/ETF, incl. credit ETFs
+    cluster = _cluster_by_symbol().get(symbol)
+    if cluster in ("rates", "commodities"):
+        return cluster
+    return "us_equity_beta"  # stated default: every other equity/ETF, incl. credit ETFs and
+    # symbols absent from the committed universe entirely — never guess rates/commodities
 
 
 def spy_correlation(

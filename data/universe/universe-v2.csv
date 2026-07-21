@@ -1,0 +1,575 @@
+# vega universe v2 — built 2026-07-20
+# migration from universe-v1: adds a `cluster` column (us_equity_beta |
+# rates | commodities | crypto_beta) derived from the WI-084-parked
+# risk.clusters RATES/COMMODITIES frozensets -- no membership changed,
+# every other column is byte-identical to universe-v1.
+# equities: S&P 500 + Nasdaq-100 (Wikipedia constituent snapshot, Yahoo symbol notation)
+# etfs: curated liquid list
+# filter (equity/etf): median 60-session dollar volume >= $20,000,000
+# crypto: CoinGecko top-20 mcap, ex stable/wrapped, Binance USDT pair
+symbol,asset_class,name,coingecko_id,binance_symbol,cluster
+A,equity,Agilent Technologies,,,us_equity_beta
+AAPL,equity,Apple Inc.,,,us_equity_beta
+ABBV,equity,AbbVie,,,us_equity_beta
+ABNB,equity,Airbnb,,,us_equity_beta
+ABT,equity,Abbott Laboratories,,,us_equity_beta
+ACGL,equity,Arch Capital Group,,,us_equity_beta
+ACN,equity,Accenture,,,us_equity_beta
+ADBE,equity,Adobe Inc.,,,us_equity_beta
+ADI,equity,Analog Devices,,,us_equity_beta
+ADM,equity,Archer Daniels Midland,,,us_equity_beta
+ADP,equity,Automatic Data Processing,,,us_equity_beta
+ADSK,equity,Autodesk,,,us_equity_beta
+AEE,equity,Ameren,,,us_equity_beta
+AEP,equity,American Electric Power,,,us_equity_beta
+AES,equity,AES Corporation,,,us_equity_beta
+AFL,equity,Aflac,,,us_equity_beta
+AIG,equity,American International Group,,,us_equity_beta
+AIZ,equity,Assurant,,,us_equity_beta
+AJG,equity,Arthur J. Gallagher & Co.,,,us_equity_beta
+AKAM,equity,Akamai Technologies,,,us_equity_beta
+ALAB,equity,Astera Labs,,,us_equity_beta
+ALB,equity,Albemarle Corporation,,,us_equity_beta
+ALGN,equity,Align Technology,,,us_equity_beta
+ALL,equity,Allstate,,,us_equity_beta
+ALLE,equity,Allegion,,,us_equity_beta
+ALNY,equity,Alnylam Pharmaceuticals,,,us_equity_beta
+AMAT,equity,Applied Materials,,,us_equity_beta
+AMCR,equity,Amcor,,,us_equity_beta
+AMD,equity,Advanced Micro Devices,,,us_equity_beta
+AME,equity,Ametek,,,us_equity_beta
+AMGN,equity,Amgen,,,us_equity_beta
+AMP,equity,Ameriprise Financial,,,us_equity_beta
+AMT,equity,American Tower,,,us_equity_beta
+AMZN,equity,Amazon,,,us_equity_beta
+ANET,equity,Arista Networks,,,us_equity_beta
+AON,equity,Aon plc,,,us_equity_beta
+AOS,equity,A. O. Smith,,,us_equity_beta
+APA,equity,APA Corporation,,,us_equity_beta
+APD,equity,Air Products,,,us_equity_beta
+APH,equity,Amphenol,,,us_equity_beta
+APO,equity,Apollo Global Management,,,us_equity_beta
+APP,equity,AppLovin,,,us_equity_beta
+APTV,equity,Aptiv,,,us_equity_beta
+ARE,equity,Alexandria Real Estate Equities,,,us_equity_beta
+ARES,equity,Ares Management,,,us_equity_beta
+ARM,equity,Arm Holdings,,,us_equity_beta
+ASML,equity,ASML Holding,,,us_equity_beta
+ATO,equity,Atmos Energy,,,us_equity_beta
+AVB,equity,AvalonBay Communities,,,us_equity_beta
+AVGO,equity,Broadcom,,,us_equity_beta
+AVY,equity,Avery Dennison,,,us_equity_beta
+AWK,equity,American Water Works,,,us_equity_beta
+AXON,equity,Axon Enterprise,,,us_equity_beta
+AXP,equity,American Express,,,us_equity_beta
+AZO,equity,AutoZone,,,us_equity_beta
+BA,equity,Boeing,,,us_equity_beta
+BAC,equity,Bank of America,,,us_equity_beta
+BALL,equity,Ball Corporation,,,us_equity_beta
+BAX,equity,Baxter International,,,us_equity_beta
+BBY,equity,Best Buy,,,us_equity_beta
+BDX,equity,Becton Dickinson,,,us_equity_beta
+BEN,equity,Franklin Resources,,,us_equity_beta
+BF-B,equity,Brown–Forman,,,us_equity_beta
+BG,equity,Bunge Global,,,us_equity_beta
+BIIB,equity,Biogen,,,us_equity_beta
+BKNG,equity,Booking Holdings,,,us_equity_beta
+BKR,equity,Baker Hughes,,,us_equity_beta
+BLDR,equity,Builders FirstSource,,,us_equity_beta
+BLK,equity,BlackRock,,,us_equity_beta
+BMY,equity,Bristol Myers Squibb,,,us_equity_beta
+BNY,equity,BNY Mellon,,,us_equity_beta
+BR,equity,Broadridge Financial Solutions,,,us_equity_beta
+BRK-B,equity,Berkshire Hathaway,,,us_equity_beta
+BRO,equity,Brown & Brown,,,us_equity_beta
+BSX,equity,Boston Scientific,,,us_equity_beta
+BX,equity,Blackstone Inc.,,,us_equity_beta
+BXP,equity,"BXP, Inc.",,,us_equity_beta
+C,equity,Citigroup,,,us_equity_beta
+CAH,equity,Cardinal Health,,,us_equity_beta
+CARR,equity,Carrier Global,,,us_equity_beta
+CASY,equity,Casey's,,,us_equity_beta
+CAT,equity,Caterpillar Inc.,,,us_equity_beta
+CB,equity,Chubb Limited,,,us_equity_beta
+CBOE,equity,Cboe Global Markets,,,us_equity_beta
+CBRE,equity,CBRE Group,,,us_equity_beta
+CCEP,equity,Coca-Cola Europacific Partners,,,us_equity_beta
+CCI,equity,Crown Castle,,,us_equity_beta
+CCL,equity,Carnival Corporation,,,us_equity_beta
+CDNS,equity,Cadence Design Systems,,,us_equity_beta
+CDW,equity,CDW Corporation,,,us_equity_beta
+CEG,equity,Constellation Energy,,,us_equity_beta
+CF,equity,CF Industries,,,us_equity_beta
+CFG,equity,Citizens Financial Group,,,us_equity_beta
+CHD,equity,Church & Dwight,,,us_equity_beta
+CHRW,equity,C.H. Robinson,,,us_equity_beta
+CHTR,equity,Charter Communications,,,us_equity_beta
+CI,equity,Cigna,,,us_equity_beta
+CIEN,equity,Ciena,,,us_equity_beta
+CINF,equity,Cincinnati Financial,,,us_equity_beta
+CL,equity,Colgate-Palmolive,,,us_equity_beta
+CLX,equity,Clorox,,,us_equity_beta
+CMCSA,equity,Comcast,,,us_equity_beta
+CME,equity,CME Group,,,us_equity_beta
+CMG,equity,Chipotle Mexican Grill,,,us_equity_beta
+CMI,equity,Cummins,,,us_equity_beta
+CMS,equity,CMS Energy,,,us_equity_beta
+CNC,equity,Centene Corporation,,,us_equity_beta
+CNP,equity,CenterPoint Energy,,,us_equity_beta
+COF,equity,Capital One,,,us_equity_beta
+COHR,equity,Coherent Corp.,,,us_equity_beta
+COIN,equity,Coinbase,,,us_equity_beta
+COO,equity,Cooper Companies (The),,,us_equity_beta
+COP,equity,ConocoPhillips,,,us_equity_beta
+COR,equity,Cencora,,,us_equity_beta
+COST,equity,Costco,,,us_equity_beta
+CPAY,equity,Corpay,,,us_equity_beta
+CPRT,equity,Copart,,,us_equity_beta
+CPT,equity,Camden Property Trust,,,us_equity_beta
+CRH,equity,CRH plc,,,us_equity_beta
+CRL,equity,Charles River Laboratories,,,us_equity_beta
+CRM,equity,Salesforce,,,us_equity_beta
+CRWD,equity,CrowdStrike,,,us_equity_beta
+CRWV,equity,CoreWeave,,,us_equity_beta
+CSCO,equity,Cisco,,,us_equity_beta
+CSGP,equity,CoStar Group,,,us_equity_beta
+CSX,equity,CSX Corporation,,,us_equity_beta
+CTAS,equity,Cintas,,,us_equity_beta
+CTSH,equity,Cognizant,,,us_equity_beta
+CTVA,equity,Corteva,,,us_equity_beta
+CVNA,equity,Carvana,,,us_equity_beta
+CVS,equity,CVS Health,,,us_equity_beta
+CVX,equity,Chevron Corporation,,,us_equity_beta
+D,equity,Dominion Energy,,,us_equity_beta
+DAL,equity,Delta Air Lines,,,us_equity_beta
+DASH,equity,DoorDash,,,us_equity_beta
+DD,equity,DuPont,,,us_equity_beta
+DDOG,equity,Datadog,,,us_equity_beta
+DE,equity,Deere & Company,,,us_equity_beta
+DECK,equity,Deckers Brands,,,us_equity_beta
+DELL,equity,Dell Technologies,,,us_equity_beta
+DG,equity,Dollar General,,,us_equity_beta
+DGX,equity,Quest Diagnostics,,,us_equity_beta
+DHI,equity,D. R. Horton,,,us_equity_beta
+DHR,equity,Danaher Corporation,,,us_equity_beta
+DIS,equity,Walt Disney Company (The),,,us_equity_beta
+DLR,equity,Digital Realty,,,us_equity_beta
+DLTR,equity,Dollar Tree,,,us_equity_beta
+DOC,equity,Healthpeak Properties,,,us_equity_beta
+DOV,equity,Dover Corporation,,,us_equity_beta
+DOW,equity,Dow Inc.,,,us_equity_beta
+DPZ,equity,Domino's,,,us_equity_beta
+DRI,equity,Darden Restaurants,,,us_equity_beta
+DTE,equity,DTE Energy,,,us_equity_beta
+DUK,equity,Duke Energy,,,us_equity_beta
+DVA,equity,DaVita,,,us_equity_beta
+DVN,equity,Devon Energy,,,us_equity_beta
+DXCM,equity,DexCom,,,us_equity_beta
+EA,equity,Electronic Arts,,,us_equity_beta
+EBAY,equity,eBay Inc.,,,us_equity_beta
+ECHO,equity,EchoStar,,,us_equity_beta
+ECL,equity,Ecolab,,,us_equity_beta
+ED,equity,Consolidated Edison,,,us_equity_beta
+EFX,equity,Equifax,,,us_equity_beta
+EG,equity,Everest Group,,,us_equity_beta
+EIX,equity,Edison International,,,us_equity_beta
+EL,equity,Estée Lauder Companies (The),,,us_equity_beta
+ELV,equity,Elevance Health,,,us_equity_beta
+EME,equity,Emcor,,,us_equity_beta
+EMR,equity,Emerson Electric,,,us_equity_beta
+EOG,equity,EOG Resources,,,us_equity_beta
+EQIX,equity,Equinix,,,us_equity_beta
+EQR,equity,Equity Residential,,,us_equity_beta
+EQT,equity,EQT Corporation,,,us_equity_beta
+ERIE,equity,Erie Indemnity,,,us_equity_beta
+ES,equity,Eversource Energy,,,us_equity_beta
+ESS,equity,Essex Property Trust,,,us_equity_beta
+ETN,equity,Eaton Corporation,,,us_equity_beta
+ETR,equity,Entergy,,,us_equity_beta
+EVRG,equity,Evergy,,,us_equity_beta
+EW,equity,Edwards Lifesciences,,,us_equity_beta
+EXC,equity,Exelon,,,us_equity_beta
+EXE,equity,Expand Energy,,,us_equity_beta
+EXPD,equity,Expeditors International,,,us_equity_beta
+EXPE,equity,Expedia Group,,,us_equity_beta
+EXR,equity,Extra Space Storage,,,us_equity_beta
+F,equity,Ford Motor Company,,,us_equity_beta
+FANG,equity,Diamondback Energy,,,us_equity_beta
+FAST,equity,Fastenal,,,us_equity_beta
+FCX,equity,Freeport-McMoRan,,,us_equity_beta
+FDS,equity,FactSet,,,us_equity_beta
+FDX,equity,FedEx,,,us_equity_beta
+FE,equity,FirstEnergy,,,us_equity_beta
+FER,equity,Ferrovial,,,us_equity_beta
+FFIV,equity,"F5, Inc.",,,us_equity_beta
+FICO,equity,Fair Isaac,,,us_equity_beta
+FIS,equity,Fidelity National Information Services,,,us_equity_beta
+FISV,equity,Fiserv,,,us_equity_beta
+FITB,equity,Fifth Third Bancorp,,,us_equity_beta
+FIX,equity,Comfort Systems USA,,,us_equity_beta
+FLEX,equity,Flex Ltd.,,,us_equity_beta
+FOX,equity,Fox Corporation (Class B),,,us_equity_beta
+FOXA,equity,Fox Corporation (Class A),,,us_equity_beta
+FRT,equity,Federal Realty Investment Trust,,,us_equity_beta
+FSLR,equity,First Solar,,,us_equity_beta
+FTNT,equity,Fortinet,,,us_equity_beta
+FTV,equity,Fortive,,,us_equity_beta
+GD,equity,General Dynamics,,,us_equity_beta
+GDDY,equity,GoDaddy,,,us_equity_beta
+GE,equity,GE Aerospace,,,us_equity_beta
+GEHC,equity,GE HealthCare,,,us_equity_beta
+GEN,equity,Gen Digital,,,us_equity_beta
+GEV,equity,GE Vernova,,,us_equity_beta
+GILD,equity,Gilead Sciences,,,us_equity_beta
+GIS,equity,General Mills,,,us_equity_beta
+GL,equity,Globe Life,,,us_equity_beta
+GLW,equity,Corning Inc.,,,us_equity_beta
+GM,equity,General Motors,,,us_equity_beta
+GNRC,equity,Generac,,,us_equity_beta
+GOOG,equity,Alphabet Inc. (Class C),,,us_equity_beta
+GOOGL,equity,Alphabet Inc. (Class A),,,us_equity_beta
+GPC,equity,Genuine Parts Company,,,us_equity_beta
+GPN,equity,Global Payments,,,us_equity_beta
+GRMN,equity,Garmin,,,us_equity_beta
+GS,equity,Goldman Sachs,,,us_equity_beta
+GWW,equity,W. W. Grainger,,,us_equity_beta
+HAL,equity,Halliburton,,,us_equity_beta
+HAS,equity,Hasbro,,,us_equity_beta
+HBAN,equity,Huntington Bancshares,,,us_equity_beta
+HCA,equity,HCA Healthcare,,,us_equity_beta
+HD,equity,Home Depot (The),,,us_equity_beta
+HIG,equity,Hartford (The),,,us_equity_beta
+HII,equity,Huntington Ingalls Industries,,,us_equity_beta
+HLT,equity,Hilton Worldwide,,,us_equity_beta
+HON,equity,Honeywell Technologies,,,us_equity_beta
+HOOD,equity,Robinhood Markets,,,us_equity_beta
+HPE,equity,Hewlett Packard Enterprise,,,us_equity_beta
+HPQ,equity,HP Inc.,,,us_equity_beta
+HRL,equity,Hormel Foods,,,us_equity_beta
+HSIC,equity,Henry Schein,,,us_equity_beta
+HST,equity,Host Hotels & Resorts,,,us_equity_beta
+HSY,equity,Hershey Company (The),,,us_equity_beta
+HUBB,equity,Hubbell Incorporated,,,us_equity_beta
+HUM,equity,Humana,,,us_equity_beta
+HWM,equity,Howmet Aerospace,,,us_equity_beta
+IBKR,equity,Interactive Brokers,,,us_equity_beta
+IBM,equity,IBM,,,us_equity_beta
+ICE,equity,Intercontinental Exchange,,,us_equity_beta
+IDXX,equity,Idexx Laboratories,,,us_equity_beta
+IEX,equity,IDEX Corporation,,,us_equity_beta
+IFF,equity,International Flavors & Fragrances,,,us_equity_beta
+INCY,equity,Incyte,,,us_equity_beta
+INTC,equity,Intel,,,us_equity_beta
+INTU,equity,Intuit,,,us_equity_beta
+INVH,equity,Invitation Homes,,,us_equity_beta
+IP,equity,International Paper,,,us_equity_beta
+IQV,equity,IQVIA,,,us_equity_beta
+IR,equity,Ingersoll Rand,,,us_equity_beta
+IRM,equity,Iron Mountain,,,us_equity_beta
+ISRG,equity,Intuitive Surgical,,,us_equity_beta
+IT,equity,Gartner,,,us_equity_beta
+ITW,equity,Illinois Tool Works,,,us_equity_beta
+IVZ,equity,Invesco,,,us_equity_beta
+J,equity,Jacobs Solutions,,,us_equity_beta
+JBHT,equity,J.B. Hunt,,,us_equity_beta
+JBL,equity,Jabil,,,us_equity_beta
+JCI,equity,Johnson Controls,,,us_equity_beta
+JKHY,equity,Jack Henry & Associates,,,us_equity_beta
+JNJ,equity,Johnson & Johnson,,,us_equity_beta
+JPM,equity,JPMorgan Chase,,,us_equity_beta
+KDP,equity,Keurig Dr Pepper,,,us_equity_beta
+KEY,equity,KeyCorp,,,us_equity_beta
+KEYS,equity,Keysight Technologies,,,us_equity_beta
+KHC,equity,Kraft Heinz,,,us_equity_beta
+KIM,equity,Kimco Realty,,,us_equity_beta
+KKR,equity,KKR & Co.,,,us_equity_beta
+KLAC,equity,KLA Corporation,,,us_equity_beta
+KMB,equity,Kimberly-Clark,,,us_equity_beta
+KMI,equity,Kinder Morgan,,,us_equity_beta
+KO,equity,Coca-Cola Company (The),,,us_equity_beta
+KR,equity,Kroger,,,us_equity_beta
+KVUE,equity,Kenvue,,,us_equity_beta
+L,equity,Loews Corporation,,,us_equity_beta
+LDOS,equity,Leidos,,,us_equity_beta
+LEN,equity,Lennar,,,us_equity_beta
+LH,equity,Labcorp,,,us_equity_beta
+LHX,equity,L3Harris,,,us_equity_beta
+LII,equity,Lennox International,,,us_equity_beta
+LIN,equity,Linde plc,,,us_equity_beta
+LITE,equity,Lumentum,,,us_equity_beta
+LLY,equity,Lilly (Eli),,,us_equity_beta
+LMT,equity,Lockheed Martin,,,us_equity_beta
+LNT,equity,Alliant Energy,,,us_equity_beta
+LOW,equity,Lowe's,,,us_equity_beta
+LRCX,equity,Lam Research,,,us_equity_beta
+LULU,equity,Lululemon Athletica,,,us_equity_beta
+LUV,equity,Southwest Airlines,,,us_equity_beta
+LVS,equity,Las Vegas Sands,,,us_equity_beta
+LYB,equity,LyondellBasell,,,us_equity_beta
+LYV,equity,Live Nation Entertainment,,,us_equity_beta
+MA,equity,Mastercard,,,us_equity_beta
+MAA,equity,Mid-America Apartment Communities,,,us_equity_beta
+MAR,equity,Marriott International,,,us_equity_beta
+MAS,equity,Masco,,,us_equity_beta
+MCD,equity,McDonald's,,,us_equity_beta
+MCHP,equity,Microchip Technology,,,us_equity_beta
+MCK,equity,McKesson Corporation,,,us_equity_beta
+MCO,equity,Moody's Corporation,,,us_equity_beta
+MDLZ,equity,Mondelez International,,,us_equity_beta
+MDT,equity,Medtronic,,,us_equity_beta
+MELI,equity,Mercado Libre,,,us_equity_beta
+MET,equity,MetLife,,,us_equity_beta
+META,equity,Meta Platforms,,,us_equity_beta
+MGM,equity,MGM Resorts,,,us_equity_beta
+MKC,equity,McCormick & Company,,,us_equity_beta
+MLM,equity,Martin Marietta Materials,,,us_equity_beta
+MMM,equity,3M,,,us_equity_beta
+MNST,equity,Monster Beverage,,,us_equity_beta
+MO,equity,Altria,,,us_equity_beta
+MOS,equity,Mosaic Company (The),,,us_equity_beta
+MPC,equity,Marathon Petroleum,,,us_equity_beta
+MPWR,equity,Monolithic Power Systems,,,us_equity_beta
+MRK,equity,Merck & Co.,,,us_equity_beta
+MRNA,equity,Moderna,,,us_equity_beta
+MRSH,equity,Marsh McLennan,,,us_equity_beta
+MRVL,equity,Marvell Technology,,,us_equity_beta
+MS,equity,Morgan Stanley,,,us_equity_beta
+MSCI,equity,MSCI Inc.,,,us_equity_beta
+MSFT,equity,Microsoft,,,us_equity_beta
+MSI,equity,Motorola Solutions,,,us_equity_beta
+MSTR,equity,MicroStrategy,,,us_equity_beta
+MTB,equity,M&T Bank,,,us_equity_beta
+MTD,equity,Mettler Toledo,,,us_equity_beta
+MU,equity,Micron Technology,,,us_equity_beta
+NBIS,equity,Nebius Group,,,us_equity_beta
+NCLH,equity,Norwegian Cruise Line Holdings,,,us_equity_beta
+NDAQ,equity,"Nasdaq, Inc.",,,us_equity_beta
+NDSN,equity,Nordson Corporation,,,us_equity_beta
+NEE,equity,NextEra Energy,,,us_equity_beta
+NEM,equity,Newmont,,,us_equity_beta
+NFLX,equity,"Netflix, Inc.",,,us_equity_beta
+NI,equity,NiSource,,,us_equity_beta
+NKE,equity,"Nike, Inc.",,,us_equity_beta
+NOC,equity,Northrop Grumman,,,us_equity_beta
+NOW,equity,ServiceNow,,,us_equity_beta
+NRG,equity,NRG Energy,,,us_equity_beta
+NSC,equity,Norfolk Southern,,,us_equity_beta
+NTAP,equity,NetApp,,,us_equity_beta
+NTRS,equity,Northern Trust,,,us_equity_beta
+NUE,equity,Nucor,,,us_equity_beta
+NVDA,equity,Nvidia,,,us_equity_beta
+NVR,equity,"NVR, Inc.",,,us_equity_beta
+NWS,equity,News Corp (Class B),,,us_equity_beta
+NWSA,equity,News Corp (Class A),,,us_equity_beta
+NXPI,equity,NXP Semiconductors,,,us_equity_beta
+O,equity,Realty Income,,,us_equity_beta
+ODFL,equity,Old Dominion Freight Line,,,us_equity_beta
+OKE,equity,Oneok,,,us_equity_beta
+OMC,equity,Omnicom Group,,,us_equity_beta
+ON,equity,ON Semiconductor,,,us_equity_beta
+ORCL,equity,Oracle Corporation,,,us_equity_beta
+ORLY,equity,O'Reilly Automotive,,,us_equity_beta
+OTIS,equity,Otis Worldwide,,,us_equity_beta
+OXY,equity,Occidental Petroleum,,,us_equity_beta
+PANW,equity,Palo Alto Networks,,,us_equity_beta
+PAYX,equity,Paychex,,,us_equity_beta
+PCAR,equity,Paccar,,,us_equity_beta
+PCG,equity,PG&E Corporation,,,us_equity_beta
+PDD,equity,PDD Holdings,,,us_equity_beta
+PEG,equity,Public Service Enterprise Group,,,us_equity_beta
+PEP,equity,PepsiCo,,,us_equity_beta
+PFE,equity,Pfizer,,,us_equity_beta
+PFG,equity,Principal Financial Group,,,us_equity_beta
+PG,equity,Procter & Gamble,,,us_equity_beta
+PGR,equity,Progressive Corporation,,,us_equity_beta
+PH,equity,Parker Hannifin,,,us_equity_beta
+PHM,equity,PulteGroup,,,us_equity_beta
+PKG,equity,Packaging Corporation of America,,,us_equity_beta
+PLD,equity,Prologis,,,us_equity_beta
+PLTR,equity,Palantir Technologies,,,us_equity_beta
+PM,equity,Philip Morris International,,,us_equity_beta
+PNC,equity,PNC Financial Services,,,us_equity_beta
+PNR,equity,Pentair,,,us_equity_beta
+PNW,equity,Pinnacle West Capital,,,us_equity_beta
+PODD,equity,Insulet Corporation,,,us_equity_beta
+PPG,equity,PPG Industries,,,us_equity_beta
+PPL,equity,PPL Corporation,,,us_equity_beta
+PRU,equity,Prudential Financial,,,us_equity_beta
+PSA,equity,Public Storage,,,us_equity_beta
+PSKY,equity,Paramount Skydance Corporation,,,us_equity_beta
+PSX,equity,Phillips 66,,,us_equity_beta
+PTC,equity,PTC Inc.,,,us_equity_beta
+PWR,equity,Quanta Services,,,us_equity_beta
+PYPL,equity,PayPal,,,us_equity_beta
+Q,equity,Qnity Electronics,,,us_equity_beta
+QCOM,equity,Qualcomm,,,us_equity_beta
+RCL,equity,Royal Caribbean Group,,,us_equity_beta
+REG,equity,Regency Centers,,,us_equity_beta
+REGN,equity,Regeneron Pharmaceuticals,,,us_equity_beta
+RF,equity,Regions Financial Corporation,,,us_equity_beta
+RJF,equity,Raymond James Financial,,,us_equity_beta
+RKLB,equity,Rocket Lab,,,us_equity_beta
+RL,equity,Ralph Lauren Corporation,,,us_equity_beta
+RMD,equity,ResMed,,,us_equity_beta
+ROK,equity,Rockwell Automation,,,us_equity_beta
+ROL,equity,"Rollins, Inc.",,,us_equity_beta
+ROP,equity,Roper Technologies,,,us_equity_beta
+ROST,equity,Ross Stores,,,us_equity_beta
+RSG,equity,Republic Services,,,us_equity_beta
+RTX,equity,RTX Corporation,,,us_equity_beta
+RVTY,equity,Revvity,,,us_equity_beta
+SBAC,equity,SBA Communications,,,us_equity_beta
+SBUX,equity,Starbucks,,,us_equity_beta
+SCHW,equity,Charles Schwab Corporation,,,us_equity_beta
+SHOP,equity,Shopify,,,us_equity_beta
+SHW,equity,Sherwin-Williams,,,us_equity_beta
+SJM,equity,J.M. Smucker Company (The),,,us_equity_beta
+SLB,equity,Schlumberger,,,us_equity_beta
+SMCI,equity,Supermicro,,,us_equity_beta
+SNA,equity,Snap-on,,,us_equity_beta
+SNDK,equity,Sandisk,,,us_equity_beta
+SNPS,equity,Synopsys,,,us_equity_beta
+SO,equity,Southern Company,,,us_equity_beta
+SOLV,equity,Solventum,,,us_equity_beta
+SPG,equity,Simon Property Group,,,us_equity_beta
+SPGI,equity,S&P Global,,,us_equity_beta
+SRE,equity,Sempra,,,us_equity_beta
+STE,equity,Steris,,,us_equity_beta
+STLD,equity,Steel Dynamics,,,us_equity_beta
+STT,equity,State Street Corporation,,,us_equity_beta
+STX,equity,Seagate Technology,,,us_equity_beta
+STZ,equity,Constellation Brands,,,us_equity_beta
+SW,equity,Smurfit Westrock,,,us_equity_beta
+SWK,equity,Stanley Black & Decker,,,us_equity_beta
+SWKS,equity,Skyworks Solutions,,,us_equity_beta
+SYF,equity,Synchrony Financial,,,us_equity_beta
+SYK,equity,Stryker Corporation,,,us_equity_beta
+SYY,equity,Sysco,,,us_equity_beta
+T,equity,AT&T,,,us_equity_beta
+TAP,equity,Molson Coors Beverage Company,,,us_equity_beta
+TDG,equity,TransDigm Group,,,us_equity_beta
+TDY,equity,Teledyne Technologies,,,us_equity_beta
+TECH,equity,Bio-Techne,,,us_equity_beta
+TEL,equity,TE Connectivity,,,us_equity_beta
+TER,equity,Teradyne,,,us_equity_beta
+TFC,equity,Truist Financial,,,us_equity_beta
+TGT,equity,Target Corporation,,,us_equity_beta
+TJX,equity,TJX Companies,,,us_equity_beta
+TKO,equity,TKO Group Holdings,,,us_equity_beta
+TMO,equity,Thermo Fisher Scientific,,,us_equity_beta
+TMUS,equity,T-Mobile US,,,us_equity_beta
+TPL,equity,Texas Pacific Land Corporation,,,us_equity_beta
+TPR,equity,"Tapestry, Inc.",,,us_equity_beta
+TRGP,equity,Targa Resources,,,us_equity_beta
+TRI,equity,Thomson Reuters,,,us_equity_beta
+TRMB,equity,Trimble Inc.,,,us_equity_beta
+TROW,equity,T. Rowe Price,,,us_equity_beta
+TRV,equity,Travelers Companies (The),,,us_equity_beta
+TSCO,equity,Tractor Supply,,,us_equity_beta
+TSLA,equity,"Tesla, Inc.",,,us_equity_beta
+TSN,equity,Tyson Foods,,,us_equity_beta
+TT,equity,Trane Technologies,,,us_equity_beta
+TTD,equity,Trade Desk (The),,,us_equity_beta
+TTWO,equity,Take-Two Interactive,,,us_equity_beta
+TXN,equity,Texas Instruments,,,us_equity_beta
+TXT,equity,Textron,,,us_equity_beta
+TYL,equity,Tyler Technologies,,,us_equity_beta
+UAL,equity,United Airlines Holdings,,,us_equity_beta
+UBER,equity,Uber,,,us_equity_beta
+UDR,equity,"UDR, Inc.",,,us_equity_beta
+UHS,equity,Universal Health Services,,,us_equity_beta
+ULTA,equity,Ulta Beauty,,,us_equity_beta
+UNH,equity,UnitedHealth Group,,,us_equity_beta
+UNP,equity,Union Pacific Corporation,,,us_equity_beta
+UPS,equity,United Parcel Service,,,us_equity_beta
+URI,equity,United Rentals,,,us_equity_beta
+USB,equity,U.S. Bancorp,,,us_equity_beta
+V,equity,Visa Inc.,,,us_equity_beta
+VEEV,equity,Veeva Systems,,,us_equity_beta
+VICI,equity,Vici Properties,,,us_equity_beta
+VLO,equity,Valero Energy,,,us_equity_beta
+VLTO,equity,Veralto,,,us_equity_beta
+VMC,equity,Vulcan Materials Company,,,us_equity_beta
+VRSK,equity,Verisk Analytics,,,us_equity_beta
+VRSN,equity,Verisign,,,us_equity_beta
+VRT,equity,Vertiv,,,us_equity_beta
+VRTX,equity,Vertex Pharmaceuticals,,,us_equity_beta
+VST,equity,Vistra Corp.,,,us_equity_beta
+VTR,equity,Ventas,,,us_equity_beta
+VTRS,equity,Viatris,,,us_equity_beta
+VZ,equity,Verizon,,,us_equity_beta
+WAB,equity,Wabtec,,,us_equity_beta
+WAT,equity,Waters Corporation,,,us_equity_beta
+WBD,equity,Warner Bros. Discovery,,,us_equity_beta
+WDAY,equity,"Workday, Inc.",,,us_equity_beta
+WDC,equity,Western Digital,,,us_equity_beta
+WEC,equity,WEC Energy Group,,,us_equity_beta
+WELL,equity,Welltower,,,us_equity_beta
+WFC,equity,Wells Fargo,,,us_equity_beta
+WM,equity,Waste Management,,,us_equity_beta
+WMB,equity,Williams Companies,,,us_equity_beta
+WMT,equity,Walmart,,,us_equity_beta
+WRB,equity,W. R. Berkley Corporation,,,us_equity_beta
+WSM,equity,"Williams-Sonoma, Inc.",,,us_equity_beta
+WST,equity,West Pharmaceutical Services,,,us_equity_beta
+WTW,equity,Willis Towers Watson,,,us_equity_beta
+WY,equity,Weyerhaeuser,,,us_equity_beta
+WYNN,equity,Wynn Resorts,,,us_equity_beta
+XEL,equity,Xcel Energy,,,us_equity_beta
+XOM,equity,ExxonMobil,,,us_equity_beta
+XYL,equity,Xylem Inc.,,,us_equity_beta
+XYZ,equity,"Block, Inc.",,,us_equity_beta
+YUM,equity,Yum! Brands,,,us_equity_beta
+ZBH,equity,Zimmer Biomet,,,us_equity_beta
+ZBRA,equity,Zebra Technologies,,,us_equity_beta
+ZTS,equity,Zoetis,,,us_equity_beta
+DIA,etf,SPDR Dow Jones,,,us_equity_beta
+EEM,etf,iShares MSCI Emerging Markets,,,us_equity_beta
+EFA,etf,iShares MSCI EAFE,,,us_equity_beta
+GLD,etf,SPDR Gold Shares,,,commodities
+HYG,etf,iShares High Yield Corp,,,us_equity_beta
+IEF,etf,iShares 7-10 Year Treasury,,,rates
+ITB,etf,iShares U.S. Home Construction,,,us_equity_beta
+IWM,etf,iShares Russell 2000,,,us_equity_beta
+KRE,etf,SPDR S&P Regional Banking,,,us_equity_beta
+LQD,etf,iShares Investment Grade Corp,,,us_equity_beta
+QQQ,etf,Invesco Nasdaq-100,,,us_equity_beta
+SLV,etf,iShares Silver,,,commodities
+SMH,etf,VanEck Semiconductor,,,us_equity_beta
+SPY,etf,SPDR S&P 500,,,us_equity_beta
+TLT,etf,iShares 20+ Year Treasury,,,rates
+USO,etf,United States Oil,,,commodities
+VNQ,etf,Vanguard Real Estate,,,us_equity_beta
+XBI,etf,SPDR S&P Biotech,,,us_equity_beta
+XLB,etf,Materials Select SPDR,,,us_equity_beta
+XLC,etf,Communication Services SPDR,,,us_equity_beta
+XLE,etf,Energy Select SPDR,,,us_equity_beta
+XLF,etf,Financial Select SPDR,,,us_equity_beta
+XLI,etf,Industrial Select SPDR,,,us_equity_beta
+XLK,etf,Technology Select SPDR,,,us_equity_beta
+XLP,etf,Consumer Staples SPDR,,,us_equity_beta
+XLRE,etf,Real Estate Select SPDR,,,us_equity_beta
+XLU,etf,Utilities Select SPDR,,,us_equity_beta
+XLV,etf,Health Care Select SPDR,,,us_equity_beta
+XLY,etf,Consumer Discretionary SPDR,,,us_equity_beta
+XME,etf,SPDR S&P Metals & Mining,,,commodities
+BTC,crypto,Bitcoin,bitcoin,BTCUSDT,crypto_beta
+ETH,crypto,Ethereum,ethereum,ETHUSDT,crypto_beta
+BNB,crypto,BNB,binancecoin,BNBUSDT,crypto_beta
+XRP,crypto,XRP,ripple,XRPUSDT,crypto_beta
+SOL,crypto,Solana,solana,SOLUSDT,crypto_beta
+TRX,crypto,TRON,tron,TRXUSDT,crypto_beta
+DOGE,crypto,Dogecoin,dogecoin,DOGEUSDT,crypto_beta
+ZEC,crypto,Zcash,zcash,ZECUSDT,crypto_beta
+ADA,crypto,Cardano,cardano,ADAUSDT,crypto_beta
+XLM,crypto,Stellar,stellar,XLMUSDT,crypto_beta
+LINK,crypto,Chainlink,chainlink,LINKUSDT,crypto_beta
+BCH,crypto,Bitcoin Cash,bitcoin-cash,BCHUSDT,crypto_beta
+GRAM,crypto,Gram (prev. Toncoin),the-open-network,GRAMUSDT,crypto_beta
+LTC,crypto,Litecoin,litecoin,LTCUSDT,crypto_beta
+HBAR,crypto,Hedera,hedera-hashgraph,HBARUSDT,crypto_beta
+SUI,crypto,Sui,sui,SUIUSDT,crypto_beta
+AVAX,crypto,Avalanche,avalanche-2,AVAXUSDT,crypto_beta
+NEAR,crypto,NEAR Protocol,near,NEARUSDT,crypto_beta
+SHIB,crypto,Shiba Inu,shiba-inu,SHIBUSDT,crypto_beta
+XAUT,crypto,Tether Gold,tether-gold,XAUTUSDT,crypto_beta
