@@ -7,10 +7,10 @@ Run: uv run python -m vega.signals
 
 from __future__ import annotations
 
-from vega.backtest.engine import run_backtest
+from vega.backtest.engine import DEFAULT_BENCHMARK, run_backtest
 from vega.backtest.registry import BacktestRegistry
 from vega.backtest.signals import Signal
-from vega.data.universe import load_universe, symbols
+from vega.data.universe import load_universe, tradable_symbols
 from vega.lifecycle.rationale import RationaleRegistry
 from vega.signals.breakout_volume import BreakoutVolumeSignal
 from vega.signals.oversold_reversion import OversoldReversionSignal
@@ -23,7 +23,13 @@ PARAM_GRID_SIZE_PER_RUN = 1
 
 
 def main() -> None:
-    universe = symbols(load_universe(), "equity", "etf")
+    # SPY excluded (WI-084 item 7): it is DEFAULT_BENCHMARK for equity/etf —
+    # letting a signal fire on the same symbol the run is benchmarked against
+    # would mix an actively-traded SPY position into the equity curve
+    # compared to passive SPY buy-and-hold.
+    universe = tradable_symbols(
+        load_universe(), "equity", "etf", exclude={DEFAULT_BENCHMARK["equity"]}
+    )
     rationale = RationaleRegistry()
     registry = BacktestRegistry()
 

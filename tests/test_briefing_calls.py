@@ -286,6 +286,36 @@ def test_exited_today_symbol_is_rejected_not_reentered(tmp_path: Path) -> None:
     assert ledger.entries() == []
 
 
+# ---- WI-084 item 7: SPY (the backtest benchmark) never gets a live call ----
+
+
+def test_benchmark_symbol_never_scanned_even_if_it_would_otherwise_fire(tmp_path: Path) -> None:
+    """SPY sits in the committed universe as a regular ETF and is also
+    backtest.engine.DEFAULT_BENCHMARK — build_calls must exclude it from the
+    scan universe entirely, not just deprioritize it. Frame is shaped so the
+    SAME setup that fires on AAA in the sibling tests would also fire on SPY
+    if it weren't excluded (both symbols get the identical shocked series)."""
+    lifecycle, registry = _seed_paper_live(tmp_path)
+    ledger = LedgerStore(tmp_path / "ledger.jsonl")
+    frame = pd.concat(
+        [_shocked_frame(symbol="AAA"), _shocked_frame(symbol="SPY")], ignore_index=True
+    )
+    result = build_calls(
+        frame=frame,
+        as_of=AS_OF,
+        equity=100_000.0,
+        regime=_regime(),
+        ledger=ledger,
+        lifecycle=lifecycle,
+        backtest_registry=registry,
+        universe_entries=_universe(["AAA", "SPY"]),
+        earnings_lookup=lambda *_: NO_EARNINGS,
+    )
+    scanned_symbols = {c.symbol for c in result.calls} | {r.symbol for r in result.rejections}
+    assert "SPY" not in scanned_symbols
+    assert all(e.get("symbol") != "SPY" for e in ledger.entries())
+
+
 # ---- deterministic ranking --------------------------------------------------
 
 

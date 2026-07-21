@@ -29,14 +29,14 @@ from typing import Any
 
 import pandas as pd
 
+from vega.backtest.engine import DEFAULT_BENCHMARK
 from vega.backtest.market_view import MarketView
 from vega.backtest.registry import BacktestRegistry
 from vega.backtest.signals import EntryProposal, Signal
 from vega.common import db
 from vega.data import snapshot
 from vega.data.types import UniverseEntry
-from vega.data.universe import load_universe
-from vega.data.universe import symbols as universe_symbols
+from vega.data.universe import load_universe, tradable_symbols
 from vega.execution.exits import reconstruct_positions, to_heat
 from vega.ledger.store import LedgerStore
 from vega.lifecycle.lifecycle import LifecycleRegistry, is_eligible_state
@@ -226,7 +226,15 @@ def build_calls(
         )
 
     universe_entries = universe_entries if universe_entries is not None else load_universe()
-    universe = universe_symbols(universe_entries, "equity", "etf")
+    # SPY excluded (WI-084 item 7): it is backtest.engine.DEFAULT_BENCHMARK for
+    # both equity and etf — the same self-benchmarking hazard run_backtest now
+    # guards against. A live call on SPY was never intended (no family's
+    # rationale targets the benchmark itself); this keeps the live scan
+    # consistent with what the backtest that justified each family's
+    # promotion actually tested.
+    universe = tradable_symbols(
+        universe_entries, "equity", "etf", exclude={DEFAULT_BENCHMARK["equity"]}
+    )
     asset_class_by_symbol = {e.symbol: e.asset_class for e in universe_entries}
     view = MarketView(frame, as_of)
 

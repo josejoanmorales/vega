@@ -171,3 +171,26 @@ def test_a_clear_winning_signal_with_enough_trades_passes_and_touches_holdout_on
     )
     assert second.record.promotion_bar is not None and report.record.promotion_bar is not None
     assert second.record.promotion_bar > report.record.promotion_bar
+
+
+def test_benchmark_symbol_is_never_traded_even_if_the_caller_passes_it(tmp_path: Path) -> None:
+    """WI-084 item 7 defense-in-depth: run_backtest itself excludes
+    bench_symbol from the tradable set, even if a caller forgets to filter it
+    out of `universe` first (data.universe.tradable_symbols is the primary
+    fix at the __main__ callers; this is the belt for the highest-stakes
+    module in the codebase). _AlwaysWinSignal fires on every symbol handed to
+    it, so if SPY reached simulate_signal it would generate SPY trades too."""
+    frame = _trend_frame("AAA", n=170, bench_symbol="SPY")
+    root = _make_store(tmp_path, frame)
+    report = run_backtest(
+        signal=_AlwaysWinSignal(),
+        universe=["AAA", "SPY"],  # caller did NOT pre-exclude the benchmark
+        asset_class="equity",
+        root=root,
+        test_size_sessions=63,
+        registry=BacktestRegistry(tmp_path / "reg.jsonl"),
+        rationale_registry=_NULL_RATIONALE,
+    )
+    traded_symbols = {trade["symbol"] for fold in report.trades_by_fold for trade in fold}
+    assert traded_symbols == {"AAA"}
+    assert "SPY" not in traded_symbols

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import re
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 from vega.common.paths import DATA_ROOT
@@ -78,3 +79,19 @@ def universe_version(directory: Path = DEFAULT_ARTIFACT.parent) -> str:
 def symbols(entries: list[UniverseEntry], *classes: str) -> list[str]:
     wanted = classes or ASSET_CLASSES
     return [e.symbol for e in entries if e.asset_class in wanted]
+
+
+def tradable_symbols(
+    entries: list[UniverseEntry], *classes: str, exclude: AbstractSet[str] = frozenset()
+) -> list[str]:
+    """`symbols()`, minus any symbol a caller must never treat as a signal
+    candidate — specifically the backtest benchmark (WI-084 item 7: SPY sits
+    in the universe artifact AND is `backtest.engine.DEFAULT_BENCHMARK` for
+    both equity and etf; without this exclusion a signal could fire on SPY
+    itself, mixing an actively-traded SPY position into the same equity curve
+    `_bench_series` benchmarks against a passive SPY buy-and-hold). Ingest and
+    any other consumer that needs the FULL universe (including the benchmark
+    symbol, so its bars keep getting fetched) must keep calling `symbols()`
+    directly — this helper is only for building a tradable/signal-candidate
+    list."""
+    return [s for s in symbols(entries, *classes) if s not in exclude]

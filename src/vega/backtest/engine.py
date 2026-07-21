@@ -84,6 +84,16 @@ def run_backtest(
     if frame.empty:
         raise ValueError(f"no {source} bars found for the requested universe/benchmark")
 
+    # The benchmark symbol is excluded from the TRADABLE set (WI-084 item 7): the
+    # committed universe includes SPY as a regular ETF, and SPY is also the
+    # equity/etf benchmark. Left uncorrected, a signal could fire on SPY and its
+    # trade P&L would land in BOTH `agg.sharpe`/`agg.max_drawdown` (the strategy
+    # side) and `_bench_series` (the passive-benchmark side) of the exact same
+    # comparison — corrupting the excess-return/drawdown-cap math on any fold
+    # where that happened. Bars for `bench_symbol` are still loaded above (needed
+    # for `_bench_series`); only the tradable candidate list is filtered.
+    tradable_universe = [s for s in universe if s != bench_symbol]
+
     all_dates = sorted(frame["date"].unique())
     dev_dates, holdout_dates = split_dev_holdout(all_dates, holdout_frac)
     folds = walk_forward_folds(dev_dates, test_size_sessions)
@@ -98,7 +108,7 @@ def run_backtest(
     for fold in folds:
         fold_frame = frame[frame["date"] <= fold.test_dates[-1]]
         trades = simulate_signal(
-            fold_frame, list(fold.test_dates), signal, universe, asset_class, notional_usd
+            fold_frame, list(fold.test_dates), signal, tradable_universe, asset_class, notional_usd
         )
         fm = compute_fold_metrics(
             trades,
@@ -158,7 +168,7 @@ def run_backtest(
     if holdout_evaluated:
         holdout_frame = frame[frame["date"] <= holdout_dates[-1]]
         holdout_trades = simulate_signal(
-            holdout_frame, holdout_dates, signal, universe, asset_class, notional_usd
+            holdout_frame, holdout_dates, signal, tradable_universe, asset_class, notional_usd
         )
         holdout_fm = compute_fold_metrics(
             holdout_trades,

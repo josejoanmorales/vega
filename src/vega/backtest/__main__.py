@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import json
 
-from vega.backtest.engine import run_backtest
+from vega.backtest.engine import DEFAULT_BENCHMARK, run_backtest
 from vega.backtest.signals import SmaCrossSignal
-from vega.data.universe import load_universe, symbols
+from vega.data.universe import load_universe, tradable_symbols
 from vega.lifecycle.rationale import NullRationaleRegistry
 
 
 def main() -> None:
-    universe = symbols(load_universe(), "equity", "etf")
+    # SPY excluded (WI-084 item 7): same self-benchmarking hazard as signals/__main__.py.
+    universe = tradable_symbols(
+        load_universe(), "equity", "etf", exclude={DEFAULT_BENCHMARK["equity"]}
+    )
     report = run_backtest(
         signal=SmaCrossSignal(asset_class="equity"),
         universe=universe,
