@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from conftest import flat_history
 from vega.backtest.costs import apply_cost
 from vega.backtest.market_view import MarketView
 from vega.backtest.signals import EntryProposal
@@ -43,29 +44,13 @@ def _dates(n: int, start_day: int = 1) -> list[str]:
     return [f"2026-02-{d:02d}" for d in range(start_day, start_day + n)]
 
 
-def _flat_history(symbol: str, dates: list[str], o=100.0, h=101.0, low=99.0, c=100.0) -> list[dict]:
-    return [
-        {
-            "symbol": symbol,
-            "date": d,
-            "open": o,
-            "high": h,
-            "low": low,
-            "close": c,
-            "adj_close": c,
-            "volume": 1_000_000.0,
-        }
-        for d in dates
-    ]
-
-
 DECISION_DATE = "2026-02-20"  # the 20th flat-history day
 FILL_DATE = "2026-02-21"  # next session's open
 
 
 def test_entry_fills_at_next_session_open_not_decision_close() -> None:
-    pre = _flat_history("TEST", _dates(20))  # Feb 01..20
-    fill_day = _flat_history("TEST", [FILL_DATE])
+    pre = flat_history("TEST", _dates(20))  # Feb 01..20
+    fill_day = flat_history("TEST", [FILL_DATE])
     frame = pd.DataFrame(pre + fill_day)
     signal = _FixedSignal(fire_on=DECISION_DATE)
 
@@ -78,15 +63,15 @@ def test_entry_fills_at_next_session_open_not_decision_close() -> None:
 
 
 def test_atr_is_none_below_period_and_exact_on_constant_true_range() -> None:
-    frame = pd.DataFrame(_flat_history("TEST", _dates(20)))
+    frame = pd.DataFrame(flat_history("TEST", _dates(20)))
     assert compute_atr(frame, "TEST", as_of="2026-02-10") is None  # only 10 bars available
     atr = compute_atr(frame, "TEST", as_of=DECISION_DATE)
     assert atr == pytest.approx(2.0)  # TR = max(101-99, |101-100|, |99-100|) = 2 every day
 
 
 def test_gap_through_stop_fills_at_open_not_stop_price() -> None:
-    pre = _flat_history("TEST", _dates(20))
-    fill_day = _flat_history("TEST", [FILL_DATE])
+    pre = flat_history("TEST", _dates(20))
+    fill_day = flat_history("TEST", [FILL_DATE])
     gap_day = [
         {
             "symbol": "TEST",
@@ -110,8 +95,8 @@ def test_gap_through_stop_fills_at_open_not_stop_price() -> None:
 
 
 def test_intraday_stop_touch_fills_at_stop_price_not_low() -> None:
-    pre = _flat_history("TEST", _dates(20))
-    fill_day = _flat_history("TEST", [FILL_DATE])
+    pre = flat_history("TEST", _dates(20))
+    fill_day = flat_history("TEST", [FILL_DATE])
     entry_price = apply_cost(100.0, "buy", LIQUID_BPS)
     stop_price = entry_price - 2.0 * 2.0  # default stop_atr_mult=2.0, atr=2.0
     touch_day = [
@@ -136,10 +121,10 @@ def test_intraday_stop_touch_fills_at_stop_price_not_low() -> None:
 
 
 def test_time_stop_exits_after_n_full_sessions_not_counting_entry_bar() -> None:
-    pre = _flat_history("TEST", _dates(20))
+    pre = flat_history("TEST", _dates(20))
     # entry fills 02-21; held sessions are 22, 23, 24 (entry bar does NOT count);
     # time_stop_days=3 queues the exit on the 24th, filling at the 25th's open.
-    holding_days = _flat_history("TEST", ["2026-02-21", "2026-02-22", "2026-02-23", "2026-02-24"])
+    holding_days = flat_history("TEST", ["2026-02-21", "2026-02-22", "2026-02-23", "2026-02-24"])
     exit_day = [
         {
             "symbol": "TEST",
@@ -163,7 +148,7 @@ def test_time_stop_exits_after_n_full_sessions_not_counting_entry_bar() -> None:
 
 
 def test_profit_partial_then_trail_only_ever_tightens() -> None:
-    pre = _flat_history("TEST", _dates(20))
+    pre = flat_history("TEST", _dates(20))
     entry_price = apply_cost(100.0, "buy", LIQUID_BPS)
     atr = 2.0
     # day 1 = ENTRY BAR: its high reaches the target, but same-bar profit-taking is
@@ -240,8 +225,8 @@ def test_profit_partial_then_trail_only_ever_tightens() -> None:
 
 def test_missing_bar_is_skipped_not_crashed() -> None:
     """A symbol absent on a given date (holiday mismatch) must not raise."""
-    pre = _flat_history("TEST", _dates(20))
-    fill_day = _flat_history("TEST", [FILL_DATE])
+    pre = flat_history("TEST", _dates(20))
+    fill_day = flat_history("TEST", [FILL_DATE])
     # 2026-02-22 has NO row for TEST at all
     frame = pd.DataFrame(pre + fill_day)
     signal = _FixedSignal(fire_on=DECISION_DATE)
@@ -250,8 +235,8 @@ def test_missing_bar_is_skipped_not_crashed() -> None:
 
 
 def test_unresolved_position_force_closed_at_end_of_window() -> None:
-    pre = _flat_history("TEST", _dates(20))
-    fill_day = _flat_history("TEST", [FILL_DATE])
+    pre = flat_history("TEST", _dates(20))
+    fill_day = flat_history("TEST", [FILL_DATE])
     frame = pd.DataFrame(pre + fill_day)
     signal = _FixedSignal(fire_on=DECISION_DATE)
     trades = simulate_signal(frame, _dates(21), signal, ["TEST"], "equity")
@@ -265,8 +250,8 @@ def test_unresolved_position_force_closed_at_end_of_window() -> None:
 def test_unresolved_trades_never_count_toward_the_sample_gate() -> None:
     from vega.backtest.metrics import compute_fold_metrics
 
-    pre = _flat_history("TEST", _dates(20))
-    fill_day = _flat_history("TEST", [FILL_DATE])
+    pre = flat_history("TEST", _dates(20))
+    fill_day = flat_history("TEST", [FILL_DATE])
     frame = pd.DataFrame(pre + fill_day)
     trades = simulate_signal(
         frame, _dates(21), _FixedSignal(fire_on=DECISION_DATE), ["TEST"], "equity"

@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+from conftest import flat_history_n
 from vega.regime.regime import RegimeState
 from vega.risk.engine import open_position_heat, propose, to_recommendation
 from vega.risk.gates import EarningsFact
@@ -10,18 +11,8 @@ from vega.risk.types import Rejection, SizedProposal
 NO_EARNINGS = EarningsFact("none")
 
 
-def _flat_history(
-    symbol: str, n: int, h: float = 101.0, low: float = 99.0, c: float = 100.0
-) -> list[dict]:
-    dates = [f"2026-06-{d:02d}" for d in range(1, n + 1)]
-    return [
-        {"symbol": symbol, "date": d, "high": h, "low": low, "close": c, "adj_close": c}
-        for d in dates
-    ]
-
-
 def _frame(n: int = 20) -> pd.DataFrame:
-    return pd.DataFrame(_flat_history("AAPL", n))
+    return pd.DataFrame(flat_history_n("AAPL", n, month="2026-06"))
 
 
 def _regime(composite: str = "risk_on") -> RegimeState:
@@ -96,7 +87,7 @@ def test_propose_rejects_when_heat_cap_would_be_breached() -> None:
 
 def test_crypto_with_spyless_frame_raises_loudly() -> None:
     # a source-filtered frame without SPY is a caller bug, not an unmeasurable fact
-    crypto_frame = pd.DataFrame(_flat_history("BTC", 20))
+    crypto_frame = pd.DataFrame(flat_history_n("BTC", 20, month="2026-06"))
     with pytest.raises(ValueError, match="no SPY rows"):
         _propose(symbol="BTC", asset_class="crypto", frame=crypto_frame)
 
@@ -149,7 +140,7 @@ def test_batch_heat_accumulates_via_open_position_heat_helper() -> None:
     assert isinstance(first, SizedProposal)
     second = _propose(
         symbol="MSFT",
-        frame=pd.DataFrame(_flat_history("MSFT", 20)),
+        frame=pd.DataFrame(flat_history_n("MSFT", 20, month="2026-06")),
         open_positions=[open_position_heat(first)],
     )
     assert isinstance(second, SizedProposal)

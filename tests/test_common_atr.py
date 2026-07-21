@@ -1,24 +1,16 @@
 import pandas as pd
 
+from conftest import flat_history_n
 from vega.common.atr import compute_atr
 
 
-def _flat_history(
-    symbol: str, n: int, h: float = 101.0, low: float = 99.0, c: float = 100.0
-) -> pd.DataFrame:
-    dates = [f"2026-05-{d:02d}" for d in range(1, n + 1)]
-    return pd.DataFrame(
-        {"symbol": [symbol] * n, "date": dates, "high": [h] * n, "low": [low] * n, "close": [c] * n}
-    )
-
-
 def test_none_below_period_plus_one_bars() -> None:
-    frame = _flat_history("AAA", 10)
+    frame = pd.DataFrame(flat_history_n("AAA", 10))
     assert compute_atr(frame, "AAA", as_of="2026-05-10") is None
 
 
 def test_exact_on_constant_true_range() -> None:
-    frame = _flat_history("AAA", 20)
+    frame = pd.DataFrame(flat_history_n("AAA", 20))
     # TR = max(101-99, |101-100|, |99-100|) = 2 every day
     assert compute_atr(frame, "AAA", as_of="2026-05-20") == 2.0
 
