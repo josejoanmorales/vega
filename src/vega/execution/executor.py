@@ -15,7 +15,6 @@ Execution honors the backtest's fill model (WI-067 review):
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from dataclasses import dataclass
@@ -23,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from vega.common.appendlog import AppendLog
 from vega.common.paths import DATA_ROOT
 from vega.ledger.store import LedgerStore
 
@@ -133,29 +133,18 @@ class AlpacaPaperBackend:
 
 
 def record_failure(ref_id: str, symbol: str, error: str, path: Path = FAILURES_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as fh:
-        fh.write(
-            json.dumps(
-                {
-                    "at": datetime.now(UTC).isoformat(),
-                    "ref_id": ref_id,
-                    "symbol": symbol,
-                    "error": error,
-                },
-                sort_keys=True,
-            )
-            + "\n"
-        )
-        fh.flush()
-        os.fsync(fh.fileno())
+    AppendLog(path).append(
+        {
+            "at": datetime.now(UTC).isoformat(),
+            "ref_id": ref_id,
+            "symbol": symbol,
+            "error": error,
+        }
+    )
 
 
 def read_failures(path: Path = FAILURES_PATH) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    with path.open() as fh:
-        return [json.loads(line) for line in fh]
+    return AppendLog(path).records()
 
 
 def pending_longs(ledger: LedgerStore) -> list[dict[str, Any]]:
