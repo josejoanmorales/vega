@@ -25,6 +25,7 @@ from vega.common.runlock import is_run_in_progress
 RUNS_DIR = DATA_ROOT / "web-runs"
 LOG_TAIL_LINES = 100
 EXIT_SKIPPED = 3  # mirrors vega.run.__main__.EXIT_SKIPPED — a lost lock race is not a failure
+EXIT_DEGRADED = 4  # mirrors vega.run.__main__.EXIT_DEGRADED — ingest down, exits still ran
 
 
 class RunAlreadyInProgress(RuntimeError):
@@ -34,7 +35,7 @@ class RunAlreadyInProgress(RuntimeError):
 @dataclass
 class _RunState:
     run_id: str
-    state: str  # "running" | "succeeded" | "skipped" | "failed"
+    state: str  # "running" | "succeeded" | "degraded" | "skipped" | "failed"
     started_at: str
     log_path: Path
     finished_at: str | None = None
@@ -93,6 +94,10 @@ class Runner:
                     self._current.state = "succeeded"
                 elif returncode == EXIT_SKIPPED:
                     self._current.state = "skipped"  # lost the lock race — a no-op, not a failure
+                elif returncode == EXIT_DEGRADED:
+                    # ingest failed but the briefing/exit path still ran on stored
+                    # data — NOT success (data is missing), not a dead pipeline
+                    self._current.state = "degraded"
                 else:
                     self._current.state = "failed"
         finally:

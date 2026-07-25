@@ -31,6 +31,7 @@
 
   <button id="run-btn">Run pipeline now</button>
   <div id="status-line" class="dim">idle</div>
+  <div id="freshness-line"></div>
   <pre id="log-tail" style="display:none"></pre>
 
   <hr>
@@ -70,9 +71,21 @@ const datePicker = document.getElementById('date-picker');
 const briefingDiv = document.getElementById('briefing');
 let polling = null;
 
+function renderFreshness(f) {
+  const div = document.getElementById('freshness-line');
+  if (!f) { div.textContent = ''; return; }
+  if (f.stale) {
+    div.innerHTML = `<span class="flag-yes">PIPELINE STALE — last successful run: ` +
+      `${escapeHtml(f.last_briefing_date || 'never')} (expected ${escapeHtml(f.expected_session)})</span>`;
+  } else {
+    div.innerHTML = `<span class="dim">last successful run: ${escapeHtml(f.last_briefing_date)}</span>`;
+  }
+}
+
 async function refreshStatus() {
   const res = await fetch('/api/status');
   const s = await res.json();
+  renderFreshness(s.freshness);
   if (s.state === 'idle') {
     statusLine.textContent = 'idle';
     logTail.style.display = 'none';

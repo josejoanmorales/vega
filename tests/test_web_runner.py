@@ -120,3 +120,25 @@ def test_status_reports_external_when_lock_held_without_tracked_run(tmp_path: Pa
         assert runner.status() == {"state": "external"}
     finally:
         runner_module.is_run_in_progress = original
+
+
+def test_degraded_exit_code_maps_to_degraded_not_failed_or_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # WI-103: EXIT_DEGRADED=4 = ingest down but briefing/exits ran on stored
+    # data. Not success (data is missing), not failed (positions WERE
+    # monitored) — the UI must show the distinction.
+    runner = Runner(runs_dir=tmp_path)
+    monkeypatch.setattr(
+        "vega.web.runner.subprocess.Popen",
+        lambda *a, **kw: _REAL_POPEN(
+            [sys.executable, "-c", "import sys; sys.exit(4)"],
+            stdout=kw["stdout"],
+            stderr=kw["stderr"],
+        ),
+    )
+    runner.start()
+    _wait_for(lambda: runner.status()["state"] != "running")
+    status = runner.status()
+    assert status["state"] == "degraded"
+    assert status["returncode"] == 4

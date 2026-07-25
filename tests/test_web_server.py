@@ -61,7 +61,10 @@ def test_index_page_served(live_server: int) -> None:
 def test_status_idle_before_any_run(live_server: int) -> None:
     status, body = _get(live_server, "/api/status")
     assert status == 200
-    assert body == {"state": "idle"}
+    assert body["state"] == "idle"
+    # WI-103: every status response carries pipeline freshness for the
+    # staleness flag — served even when no run is active.
+    assert set(body["freshness"]) == {"last_briefing_date", "expected_session", "stale"}
 
 
 def test_briefings_list_sorted(live_server: int) -> None:

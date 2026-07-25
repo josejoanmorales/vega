@@ -223,3 +223,45 @@ def test_inspect_never_writes_to_ledger_or_lifecycle(tmp_path: Path, monkeypatch
 
     assert ledger_path.read_text() == ledger_before
     assert (tmp_path / "lifecycle.jsonl").read_text() == lifecycle_before
+
+
+# ---- pipeline_freshness (WI-103) ------------------------------------------
+
+
+def test_freshness_fresh_when_last_expected_session_has_a_briefing(tmp_path: Path) -> None:
+    from datetime import date
+
+    (tmp_path / "2026-07-23.md").write_text("x")  # Thursday
+    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 24))  # Friday
+    assert f == {
+        "last_briefing_date": "2026-07-23",
+        "expected_session": "2026-07-23",
+        "stale": False,
+    }
+
+
+def test_freshness_stale_after_a_missed_weekday(tmp_path: Path) -> None:
+    from datetime import date
+
+    # The real incident shape: last briefing Monday Jul 20, checked Wednesday
+    # Jul 22 — Tuesday's run never happened.
+    (tmp_path / "2026-07-20.md").write_text("x")
+    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 22))
+    assert f["stale"] is True
+    assert f["expected_session"] == "2026-07-21"
+
+
+def test_freshness_weekend_does_not_false_flag(tmp_path: Path) -> None:
+    from datetime import date
+
+    (tmp_path / "2026-07-24.md").write_text("x")  # Friday
+    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 26))  # Sunday
+    assert f["stale"] is False  # expected session is Friday, which exists
+
+
+def test_freshness_never_ran(tmp_path: Path) -> None:
+    from datetime import date
+
+    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 24))
+    assert f["last_briefing_date"] is None
+    assert f["stale"] is True

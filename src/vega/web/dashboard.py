@@ -8,7 +8,7 @@ this module ever writes to the ledger or the lifecycle registry.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ from vega.briefing.calls import FAMILY_SIGNALS, eligible_families, load_signal_f
 from vega.briefing.engine import assemble
 from vega.common import db
 from vega.common.doctrine import DEFAULT_TIME_STOP_SESSIONS
+from vega.common.paths import DATA_ROOT
 from vega.data import snapshot
 from vega.data.universe import load_universe
 from vega.execution.executor import read_failures
@@ -27,9 +28,43 @@ from vega.lifecycle.lifecycle import LifecycleRegistry
 from vega.lifecycle.live_trades import evaluate_demotions, full_session_calendar
 from vega.risk.gates import EarningsFact, check_all_gates
 
+BRIEFINGS_DIR = DATA_ROOT / "briefings"
+
 
 class SymbolNotInUniverse(ValueError):
     """The requested symbol isn't in the committed tradable universe."""
+
+
+def _last_expected_session(today: date) -> date:
+    """Most recent weekday strictly BEFORE today. 'Strictly before' keeps the
+    flag honest around the schedule: today's 07:00 run not having happened yet
+    (or still running) is not an outage. Market holidays will false-flag for
+    one day — accepted: it's an attention flag, and 'no run happened
+    yesterday' is still literally true."""
+    d = today - timedelta(days=1)
+    while d.weekday() >= 5:  # Sat/Sun
+        d -= timedelta(days=1)
+    return d
+
+
+def pipeline_freshness(
+    briefings_dir: Path = BRIEFINGS_DIR, today: date | None = None
+) -> dict[str, Any]:
+    """Age of the last successful pipeline run, for the dashboard staleness
+    flag (WI-103: the Jul 21-24 ingest outage ran silent for three mornings).
+    Source of truth = the briefing files themselves — the pipeline's last
+    step, so a briefing for session S proves the whole run (ingest degraded
+    or not, exits evaluated) completed for S. No new state file to maintain
+    or drift."""
+    today = today or date.today()
+    dates = sorted(p.stem for p in briefings_dir.glob("????-??-??.md"))
+    last = dates[-1] if dates else None
+    expected = _last_expected_session(today).isoformat()
+    return {
+        "last_briefing_date": last,
+        "expected_session": expected,
+        "stale": last is None or last < expected,
+    }
 
 
 def _max_session(root: Path = snapshot.DATA_ROOT) -> str:

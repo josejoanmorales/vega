@@ -102,7 +102,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/":
                 return self._send(200, STATIC_INDEX.read_text(), "text/html; charset=utf-8")
             if path == "/api/status":
-                return self._send(200, runner.status())
+                status = runner.status()
+                status["freshness"] = dashboard.pipeline_freshness()
+                return self._send(200, status)
             if path == "/api/briefings":
                 return self._send(200, _list_briefing_dates())
             if path == "/api/positions":
