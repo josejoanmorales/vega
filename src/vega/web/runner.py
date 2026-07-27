@@ -20,12 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from vega.common.paths import DATA_ROOT, PROJECT_ROOT
-from vega.common.runlock import is_run_in_progress
+from vega.common.runlock import EXIT_DEGRADED, EXIT_SKIPPED, is_run_in_progress
 
 RUNS_DIR = DATA_ROOT / "web-runs"
 LOG_TAIL_LINES = 100
-EXIT_SKIPPED = 3  # mirrors vega.run.__main__.EXIT_SKIPPED — a lost lock race is not a failure
-EXIT_DEGRADED = 4  # mirrors vega.run.__main__.EXIT_DEGRADED — ingest down, exits still ran
 
 
 class RunAlreadyInProgress(RuntimeError):

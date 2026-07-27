@@ -8,6 +8,7 @@ this module ever writes to the ledger or the lifecycle registry.
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ from vega.briefing.calls import FAMILY_SIGNALS, eligible_families, load_signal_f
 from vega.briefing.engine import assemble
 from vega.common import db
 from vega.common.doctrine import DEFAULT_TIME_STOP_SESSIONS
-from vega.common.paths import DATA_ROOT
+from vega.common.paths import BRIEFINGS_DIR
 from vega.data import snapshot
 from vega.data.universe import load_universe
 from vega.execution.executor import read_failures
@@ -28,14 +29,14 @@ from vega.lifecycle.lifecycle import LifecycleRegistry
 from vega.lifecycle.live_trades import evaluate_demotions, full_session_calendar
 from vega.risk.gates import EarningsFact, check_all_gates
 
-BRIEFINGS_DIR = DATA_ROOT / "briefings"
+_BRIEFING_STEM_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class SymbolNotInUniverse(ValueError):
     """The requested symbol isn't in the committed tradable universe."""
 
 
-def _last_expected_session(today: date) -> date:
+def _last_expected_run_day(today: date) -> date:
     """Most recent weekday strictly BEFORE today. 'Strictly before' keeps the
     flag honest around the schedule: today's 07:00 run not having happened yet
     (or still running) is not an outage. Market holidays will false-flag for
@@ -52,18 +53,36 @@ def pipeline_freshness(
 ) -> dict[str, Any]:
     """Age of the last successful pipeline run, for the dashboard staleness
     flag (WI-103: the Jul 21-24 ingest outage ran silent for three mornings).
-    Source of truth = the briefing files themselves — the pipeline's last
-    step, so a briefing for session S proves the whole run (ingest degraded
-    or not, exits evaluated) completed for S. No new state file to maintain
-    or drift."""
+
+    Judged by the newest briefing file's MTIME (when a run last completed),
+    NOT its filename date: briefings are dated by the store's max session, and
+    ingest stores only `date < today` (UTC), so a normal 07:00 run writes a
+    briefing dated one day back — comparing filename dates to the calendar
+    would false-flag STALE every weekend and every pre-run morning (review
+    finding on the first cut of this function). The run day is the fact this
+    flag reports; the filename date is data recency, returned for display.
+
+    Known edge (accepted): a degraded/duplicate run that hits the write-once
+    briefing conflict touches no file, so a same-day earlier success keeps
+    the flag green — correct — while a lone conflicting run after an outage
+    stays red until real data flows — also correct.
+    """
     today = today or date.today()
-    dates = sorted(p.stem for p in briefings_dir.glob("????-??-??.md"))
-    last = dates[-1] if dates else None
-    expected = _last_expected_session(today).isoformat()
+    briefs = [p for p in briefings_dir.glob("*.md") if _BRIEFING_STEM_RE.fullmatch(p.stem)]
+    expected = _last_expected_run_day(today).isoformat()
+    if not briefs:
+        return {
+            "last_briefing_date": None,
+            "last_run_day": None,
+            "expected_run_day": expected,
+            "stale": True,
+        }
+    last_run_day = date.fromtimestamp(max(p.stat().st_mtime for p in briefs)).isoformat()
     return {
-        "last_briefing_date": last,
-        "expected_session": expected,
-        "stale": last is None or last < expected,
+        "last_briefing_date": max(p.stem for p in briefs),
+        "last_run_day": last_run_day,
+        "expected_run_day": expected,
+        "stale": last_run_day < expected,
     }
 
 

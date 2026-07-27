@@ -8,12 +8,11 @@ import pandas as pd
 
 from vega.briefing.calls import RenderedCall, RenderedRejection
 from vega.briefing.engine import BriefingData
-from vega.common.paths import DATA_ROOT
+from vega.common.paths import BRIEFINGS_DIR
 from vega.data.types import SnapshotConflictError
 from vega.execution.exits import ExitDecision
 from vega.lifecycle.live_trades import DemotionOutcome
 
-BRIEFINGS_DIR = DATA_ROOT / "briefings"
 TOP_N = 5
 
 

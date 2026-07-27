@@ -76,9 +76,10 @@ function renderFreshness(f) {
   if (!f) { div.textContent = ''; return; }
   if (f.stale) {
     div.innerHTML = `<span class="flag-yes">PIPELINE STALE — last successful run: ` +
-      `${escapeHtml(f.last_briefing_date || 'never')} (expected ${escapeHtml(f.expected_session)})</span>`;
+      `${escapeHtml(f.last_run_day || 'never')} (expected ${escapeHtml(f.expected_run_day)})</span>`;
   } else {
-    div.innerHTML = `<span class="dim">last successful run: ${escapeHtml(f.last_briefing_date)}</span>`;
+    div.innerHTML = `<span class="dim">last successful run: ${escapeHtml(f.last_run_day)}` +
+      ` (data through ${escapeHtml(f.last_briefing_date)})</span>`;
   }
 }
 

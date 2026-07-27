@@ -62,9 +62,14 @@ def test_status_idle_before_any_run(live_server: int) -> None:
     status, body = _get(live_server, "/api/status")
     assert status == 200
     assert body["state"] == "idle"
-    # WI-103: every status response carries pipeline freshness for the
-    # staleness flag — served even when no run is active.
-    assert set(body["freshness"]) == {"last_briefing_date", "expected_session", "stale"}
+    # WI-103: every status response carries pipeline freshness — served even
+    # when no run is active, and computed from the PATCHED briefings dir, not
+    # the production one (review: the default-arg path read the real
+    # data/briefings under test). The fixture's dir holds 2026-07-15/16
+    # written just now → fresh, and a date no production dir would report.
+    f = body["freshness"]
+    assert f["last_briefing_date"] == "2026-07-16"
+    assert f["stale"] is False  # mtime is now → run day is today
 
 
 def test_briefings_list_sorted(live_server: int) -> None:

@@ -21,6 +21,13 @@ from vega.common.paths import DATA_ROOT
 
 DEFAULT_LOCK_PATH = DATA_ROOT / "run.lock"
 
+# Pipeline exit codes, shared by the producer (vega.run.__main__) and the
+# consumer (vega.web.runner) — WI-103 review: they were mirrored constants in
+# two modules, so a change in one would silently misclassify run outcomes in
+# the other. This module is the run-coordination home both already import.
+EXIT_SKIPPED = 3  # lost the lock race — a correct no-op, not a failure
+EXIT_DEGRADED = 4  # ingest down; briefing/exit monitoring still ran on stored data
+
 
 class RunInProgress(RuntimeError):
     """Another process already holds the run lock."""

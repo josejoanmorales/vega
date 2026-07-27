@@ -228,40 +228,69 @@ def test_inspect_never_writes_to_ledger_or_lifecycle(tmp_path: Path, monkeypatch
 # ---- pipeline_freshness (WI-103) ------------------------------------------
 
 
-def test_freshness_fresh_when_last_expected_session_has_a_briefing(tmp_path: Path) -> None:
+def _briefing(dir: Path, name: str, mtime_day: str) -> None:
+    """A briefing file NAMED for a session, last-touched on a given RUN day —
+    the two differ on every normal morning run (ingest stores only date<today
+    UTC, so the briefing is dated one day back)."""
+    import os
+    from datetime import datetime
+
+    f = dir / f"{name}.md"
+    f.write_text("x")
+    ts = datetime.fromisoformat(f"{mtime_day}T08:00:00").timestamp()
+    os.utime(f, (ts, ts))
+
+
+def test_freshness_judges_run_day_by_mtime_not_filename_date(tmp_path: Path) -> None:
     from datetime import date
 
-    (tmp_path / "2026-07-23.md").write_text("x")  # Thursday
-    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 24))  # Friday
-    assert f == {
-        "last_briefing_date": "2026-07-23",
-        "expected_session": "2026-07-23",
-        "stale": False,
-    }
+    # The review-confirmed false positive: Monday 07:00 run succeeds, briefing
+    # NAMED for Sunday (crypto session, D-1). Checked Tuesday pre-run: the
+    # run day (Monday) is what matters — filename-date logic said STALE here.
+    _briefing(tmp_path, "2026-07-19", mtime_day="2026-07-20")
+    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 21))
+    assert f["last_run_day"] == "2026-07-20"
+    assert f["expected_run_day"] == "2026-07-20"
+    assert f["stale"] is False
 
 
-def test_freshness_stale_after_a_missed_weekday(tmp_path: Path) -> None:
+def test_freshness_stale_after_a_missed_weekday_run(tmp_path: Path) -> None:
     from datetime import date
 
-    # The real incident shape: last briefing Monday Jul 20, checked Wednesday
-    # Jul 22 — Tuesday's run never happened.
-    (tmp_path / "2026-07-20.md").write_text("x")
+    # The real incident shape: last successful run Monday Jul 20 (briefing
+    # dated Sunday), checked Wednesday Jul 22 — Tuesday run never completed.
+    _briefing(tmp_path, "2026-07-19", mtime_day="2026-07-20")
     f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 22))
     assert f["stale"] is True
-    assert f["expected_session"] == "2026-07-21"
+    assert f["expected_run_day"] == "2026-07-21"
 
 
 def test_freshness_weekend_does_not_false_flag(tmp_path: Path) -> None:
     from datetime import date
 
-    (tmp_path / "2026-07-24.md").write_text("x")  # Friday
-    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 26))  # Sunday
-    assert f["stale"] is False  # expected session is Friday, which exists
+    # Friday morning run (briefing dated Thursday). All weekend the expected
+    # run day stays Friday — the old filename-date logic flagged STALE here.
+    _briefing(tmp_path, "2026-07-23", mtime_day="2026-07-24")
+    for day in (25, 26):  # Sat, Sun
+        f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, day))
+        assert f["stale"] is False, day
 
 
 def test_freshness_never_ran(tmp_path: Path) -> None:
     from datetime import date
 
     f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 24))
-    assert f["last_briefing_date"] is None
+    assert f["last_run_day"] is None
     assert f["stale"] is True
+
+
+def test_freshness_ignores_non_date_stems(tmp_path: Path) -> None:
+    from datetime import date
+
+    # 'zzzz-99-99.md' matches a naive ????-??-?? glob and would sort last;
+    # only strictly date-shaped stems may drive the flag or the display date.
+    _briefing(tmp_path, "2026-07-23", mtime_day="2026-07-24")
+    (tmp_path / "notes.md").write_text("x")
+    _briefing(tmp_path, "zzzz-99-99", mtime_day="2026-07-24")
+    f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 24))
+    assert f["last_briefing_date"] == "2026-07-23"

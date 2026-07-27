@@ -32,11 +32,14 @@ import time
 import traceback
 
 from vega.briefing.__main__ import main as run_briefing
-from vega.common.runlock import RunInProgress, acquire_run_lock
+from vega.common.runlock import (
+    EXIT_DEGRADED,
+    EXIT_SKIPPED,
+    RunInProgress,
+    acquire_run_lock,
+)
 from vega.data import ingest
 
-EXIT_SKIPPED = 3
-EXIT_DEGRADED = 4
 RETRY_DELAY_S = 2.0
 INGEST_RETRY_DELAY_S = 60.0
 
@@ -56,7 +59,11 @@ def notify(title: str, message: str) -> None:
 
 
 def _as_script_str(text: str) -> str:
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # Newlines flattened, not escaped: an embedded newline would end the
+    # osascript -e statement mid-string (review: latent injection if an
+    # exception message is ever interpolated into a notification).
+    flat = text.replace("\n", " ").replace("\r", " ")
+    return '"' + flat.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _ingest_with_retry(days: int) -> bool:

@@ -18,3 +18,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = PROJECT_ROOT / "data"
+# The ONE briefings-dir constant (WI-103 review: it had drifted into three
+# identical module-level copies — briefing/render.py, web/server.py,
+# web/dashboard.py).
+BRIEFINGS_DIR = DATA_ROOT / "briefings"

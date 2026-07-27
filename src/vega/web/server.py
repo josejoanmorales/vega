@@ -24,14 +24,13 @@ from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from vega.common.paths import DATA_ROOT
+from vega.common.paths import BRIEFINGS_DIR, DATA_ROOT
 from vega.web import dashboard
 from vega.web.markdown import render_markdown
 from vega.web.runner import RunAlreadyInProgress, Runner
 
 DEFAULT_PORT = 7788
 STATIC_INDEX = Path(__file__).resolve().parent / "static" / "index.html"
-BRIEFINGS_DIR = DATA_ROOT / "briefings"
 AUDIT_LOG = DATA_ROOT / "web-runs" / "audit.log"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BRIEFING_PATH_RE = re.compile(r"^/api/briefings/(\d{4}-\d{2}-\d{2})$")
@@ -103,7 +102,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, STATIC_INDEX.read_text(), "text/html; charset=utf-8")
             if path == "/api/status":
                 status = runner.status()
-                status["freshness"] = dashboard.pipeline_freshness()
+                # BRIEFINGS_DIR passed explicitly (module global, resolved at call time)
+                # so tests patching server_module.BRIEFINGS_DIR isolate freshness too —
+                # review: the default-arg path read the PRODUCTION dir under test.
+                status["freshness"] = dashboard.pipeline_freshness(BRIEFINGS_DIR)
                 return self._send(200, status)
             if path == "/api/briefings":
                 return self._send(200, _list_briefing_dates())
