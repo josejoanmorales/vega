@@ -142,3 +142,23 @@ def test_degraded_exit_code_maps_to_degraded_not_failed_or_success(
     status = runner.status()
     assert status["state"] == "degraded"
     assert status["returncode"] == 4
+
+
+def test_stuck_exit_code_maps_to_stuck_not_skipped(tmp_path: Path, monkeypatch) -> None:
+    # WI-129: EXIT_STUCK=5 means a PREVIOUS run is wedged and nothing ran.
+    # Unlike "skipped" (a benign race) this needs a human, so the UI must not
+    # collapse the two.
+    runner = Runner(runs_dir=tmp_path)
+    monkeypatch.setattr(
+        "vega.web.runner.subprocess.Popen",
+        lambda *a, **kw: _REAL_POPEN(
+            [sys.executable, "-c", "import sys; sys.exit(5)"],
+            stdout=kw["stdout"],
+            stderr=kw["stderr"],
+        ),
+    )
+    runner.start()
+    _wait_for(lambda: runner.status()["state"] != "running")
+    status = runner.status()
+    assert status["state"] == "stuck"
+    assert status["returncode"] == 5

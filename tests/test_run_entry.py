@@ -1,5 +1,6 @@
 """vega.run entry point: lock semantics + skip exit code (WI-088 review)."""
 
+import os
 import subprocess
 import sys
 import time
@@ -153,3 +154,56 @@ def test_briefing_crash_notifies_and_fails_hard(tmp_path: Path) -> None:
     assert proc.returncode == 1
     assert "NOTIFY: Vega pipeline FAILED" in proc.stdout
     assert "briefing boom" in proc.stderr
+
+
+# ---- WI-129: a wedged predecessor is not a benign skip --------------------
+
+_STUCK_SNIPPET = """
+import functools, sys
+from pathlib import Path
+import vega.common.runlock as rl
+import vega.run.__main__ as m
+
+lock = Path(LOCK_PATH)
+m.RETRY_DELAY_S = 0.1
+m.acquire_run_lock = functools.partial(rl.acquire_run_lock, lock)
+m.held_for_seconds = functools.partial(rl.held_for_seconds, lock)
+m.holder = functools.partial(rl.holder, lock)
+m.notify = lambda title, message: print(f"NOTIFY: {title} | {message}")
+m.ingest = type("X", (), {"run": staticmethod(lambda days=7: 1 / 0)})
+m.run_briefing = lambda: print("BRIEFING RAN")
+sys.argv = ["vega.run"]
+m.main()
+"""
+
+
+def _run_against_held_lock(lock: Path, age_s: float) -> subprocess.CompletedProcess[str]:
+    """Hold the lock, backdate it to `age_s`, and let vega.run react."""
+    with acquire_run_lock(lock):
+        os.utime(lock, (time.time() - age_s, time.time() - age_s))
+        return subprocess.run(  # noqa: S603
+            [sys.executable, "-c", _STUCK_SNIPPET.replace("LOCK_PATH", repr(str(lock)))],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+
+def test_a_long_held_lock_is_reported_stuck_not_skipped(tmp_path: Path) -> None:
+    # The incident: the holder was alive but wedged for 3d13h, so every later
+    # run exited EXIT_SKIPPED — silent by design. It must alert instead.
+    proc = _run_against_held_lock(tmp_path / "run.lock", age_s=4 * 3600)
+    assert proc.returncode == 5, proc.stdout + proc.stderr
+    assert "NOTIFY: Vega pipeline STUCK" in proc.stdout
+    assert "STUCK RUN" in proc.stderr
+    assert "4.0h" in proc.stdout  # the age a human needs
+    assert "BRIEFING RAN" not in proc.stdout  # nothing ran; it could not get the lock
+
+
+def test_a_briefly_held_lock_still_skips_quietly(tmp_path: Path) -> None:
+    # A genuine concurrent run must keep its WI-088 behaviour: quiet skip, no
+    # alert, exit 3 — otherwise every real race would page a human.
+    proc = _run_against_held_lock(tmp_path / "run.lock", age_s=5)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    assert "already in progress" in proc.stdout
+    assert "NOTIFY" not in proc.stdout

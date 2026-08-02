@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from vega.common.paths import DATA_ROOT, PROJECT_ROOT
-from vega.common.runlock import EXIT_DEGRADED, EXIT_SKIPPED, is_run_in_progress
+from vega.common.runlock import EXIT_DEGRADED, EXIT_SKIPPED, EXIT_STUCK, is_run_in_progress
 
 RUNS_DIR = DATA_ROOT / "web-runs"
 LOG_TAIL_LINES = 100
@@ -96,6 +96,10 @@ class Runner:
                     # ingest failed but the briefing/exit path still ran on stored
                     # data — NOT success (data is missing), not a dead pipeline
                     self._current.state = "degraded"
+                elif returncode == EXIT_STUCK:
+                    # refused because a PREVIOUS run is wedged — nothing ran, and
+                    # unlike "skipped" this needs a human (WI-129)
+                    self._current.state = "stuck"
                 else:
                     self._current.state = "failed"
         finally:

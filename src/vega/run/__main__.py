@@ -35,8 +35,12 @@ from vega.briefing.__main__ import main as run_briefing
 from vega.common.runlock import (
     EXIT_DEGRADED,
     EXIT_SKIPPED,
+    EXIT_STUCK,
+    STUCK_RUN_AFTER_S,
     RunInProgress,
     acquire_run_lock,
+    held_for_seconds,
+    holder,
 )
 from vega.data import ingest
 
@@ -44,18 +48,30 @@ RETRY_DELAY_S = 2.0
 INGEST_RETRY_DELAY_S = 60.0
 
 
-def notify(title: str, message: str) -> None:
+def notify(title: str, message: str) -> bool:
     """Best-effort local notification (macOS only, stdlib only). Never raises:
-    alerting must not be able to break the pipeline it reports on."""
+    alerting must not be able to break the pipeline it reports on.
+
+    Returns whether the notification was actually delivered, and says so on
+    stderr when it was not (WI-129). Swallowing this silently was its own
+    version of the bug under repair: an alerting path that fails invisibly is
+    indistinguishable from one that never fires, and the run log is the only
+    place a human can later find out which happened."""
     if sys.platform != "darwin":
-        return
+        return False
     script = f"display notification {_as_script_str(message)} with title {_as_script_str(title)}"
     try:
-        subprocess.run(  # noqa: S603 — fixed binary, arguments quoted by _as_script_str
+        proc = subprocess.run(  # noqa: S603 — fixed binary, arguments quoted by _as_script_str
             ["/usr/bin/osascript", "-e", script], check=False, capture_output=True, timeout=10
         )
-    except Exception:  # noqa: BLE001, S110 — best-effort by contract, nothing to log to
-        pass
+    except Exception as exc:  # noqa: BLE001 — best-effort by contract
+        print(f"NOTIFY FAILED ({type(exc).__name__}: {exc}) — alert not delivered", file=sys.stderr)
+        return False
+    if proc.returncode != 0:
+        err = proc.stderr.decode(errors="replace").strip()
+        print(f"NOTIFY FAILED (osascript exit {proc.returncode}: {err})", file=sys.stderr)
+        return False
+    return True
 
 
 def _as_script_str(text: str) -> str:
@@ -121,6 +137,21 @@ def main() -> None:
             if attempt == 1:
                 time.sleep(RETRY_DELAY_S)  # a status probe's microsecond hold self-heals
                 continue
+            # WI-129: "someone else is running" and "the last run wedged and
+            # never let go" are the same RunInProgress. Treating both as a
+            # benign skip is what let the 2026-07-27 hang disable exit
+            # monitoring silently for 3d13h — a skip neither alerts nor
+            # degrades. Age the hold to tell them apart.
+            age = held_for_seconds()
+            if age is not None and age > STUCK_RUN_AFTER_S:
+                who = holder() or {}
+                detail = (
+                    f"run lock held {age / 3600:.1f}h by pid {who.get('pid', '?')} "
+                    f"since {who.get('started_at', '?')} — pipeline is NOT running"
+                )
+                print(f"STUCK RUN: {detail}", file=sys.stderr)
+                notify("Vega pipeline STUCK", detail)
+                sys.exit(EXIT_STUCK)
             print("a pipeline run is already in progress — skipping this trigger")
             sys.exit(EXIT_SKIPPED)
 

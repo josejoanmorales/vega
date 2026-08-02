@@ -13,10 +13,20 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
+from vega.common.timeouts import hard_timeout
 from vega.data import snapshot
 from vega.data.sources import alpaca_src, binance_src, coingecko_src, yfinance_src
 from vega.data.universe import load_universe, symbols
 from vega.data.validate import CrossCheckResult, cross_check
+
+# Total wall-clock cap (WI-129). Every adapter has its own per-request
+# timeout, but those only bound calls we control in libraries we do not: the
+# 2026-07-27 wedge was inside yfinance's own machinery and never returned.
+# This is the catch-all that converts ANY hang into an exception, which
+# WI-103's retry-then-degrade already handles (exits still get evaluated).
+# Generous vs a real run (~6 min observed on a 4-session catch-up, and
+# CoinGecko alone paces 20 crypto symbols at 7s apart).
+WALL_CLOCK_CAP_S = 900.0
 
 
 @dataclass(frozen=True)
@@ -57,7 +67,18 @@ def _write_result(
     return added, quarantined, frozen, drift, dates
 
 
-def run(days: int = 7, root: Path = snapshot.DATA_ROOT) -> IngestSummary:
+def run(
+    days: int = 7, root: Path = snapshot.DATA_ROOT, cap_s: float = WALL_CLOCK_CAP_S
+) -> IngestSummary:
+    """Fetch → snapshot → cross-check → write-once, under a hard wall-clock
+    cap so a hung vendor raises instead of wedging the pipeline (WI-129).
+    The cap wraps the WHOLE body: a partial ingest is safe to abandon and
+    retry because the clean store is per-(symbol, date) write-once."""
+    with hard_timeout(cap_s, "ingest"):
+        return _run(days, root)
+
+
+def _run(days: int, root: Path) -> IngestSummary:
     load_dotenv()
     universe = load_universe()
     equities = symbols(universe, "equity", "etf")

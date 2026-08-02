@@ -9,6 +9,12 @@ import yfinance as yf
 
 from vega.data.types import BAR_COLUMNS
 
+# Per-request cap (WI-129). yfinance defaults to no timeout on this path: the
+# 2026-07-27 wedge sat here for 3d13h. This bounds each HTTP request, NOT the
+# whole call — yf.download fans out across its own thread pool, so the
+# `hard_timeout` around ingest.run remains the actual guarantee.
+REQUEST_TIMEOUT_S = 30
+
 
 def fetch_daily(symbols: list[str], start: str, end: str) -> pd.DataFrame:
     raw = yf.download(
@@ -19,6 +25,7 @@ def fetch_daily(symbols: list[str], start: str, end: str) -> pd.DataFrame:
         group_by="ticker",
         progress=False,
         threads=True,
+        timeout=REQUEST_TIMEOUT_S,
     )
     return normalize(raw, symbols)
 
