@@ -43,10 +43,14 @@ from vega.common.runlock import (
     held_for_seconds,
     holder,
 )
+from vega.common.timeouts import HardTimeout, hard_timeout
 from vega.data import ingest
 
 RETRY_DELAY_S = 2.0
 INGEST_RETRY_DELAY_S = 60.0
+# The briefing does per-candidate vendor lookups and broker calls; generous
+# against a real run (seconds to low minutes), tight against a wedge.
+BRIEFING_CAP_S = 900.0
 
 
 def notify(title: str, message: str) -> bool:
@@ -89,7 +93,11 @@ def _ingest_with_retry(days: int) -> bool:
     for attempt in (1, 2):
         try:
             summary = ingest.run(days)
-        except Exception:  # noqa: BLE001 — any vendor/network error degrades, never aborts
+        except (Exception, HardTimeout):  # noqa: BLE001 — vendor error OR hang, both degrade
+            # HardTimeout is named explicitly because it is a BaseException:
+            # it must bypass the eight `except Exception` handlers downstream,
+            # but THIS is the one place a hung ingest is legitimately
+            # recoverable — the briefing still runs on stored data.
             print(f"ingest attempt {attempt} FAILED:", file=sys.stderr)
             traceback.print_exc()
             if attempt == 1:
@@ -113,7 +121,15 @@ def _pipeline(days: int) -> bool:
             "DEGRADED: ingest failed twice — continuing to the briefing on the "
             "stored data (exits still evaluated; new entries self-gate on staleness)"
         )
-    run_briefing()
+    # The briefing path is capped too (review finding): WI-129 bounded ingest
+    # because that is where the incident happened, but this path makes the
+    # SAME untimed vendor calls — regime.inputs.fetch_vix is a yf.download,
+    # the identical call shape and library that wedged for 3d13h — and it is
+    # the path that evaluates exits and PLACES ORDERS. A hang here is not
+    # degradable: unlike ingest there is no stored-data fallback, nothing was
+    # monitored, so it propagates as a hard failure.
+    with hard_timeout(BRIEFING_CAP_S, "briefing"):
+        run_briefing()
     return ingest_ok
 
 
@@ -138,7 +154,11 @@ def main() -> None:
                 heartbeat_ping("start", f"run started (days={days})")
                 try:
                     ingest_ok = _pipeline(days)
-                except Exception as exc:
+                except (Exception, HardTimeout) as exc:
+                    # HardTimeout named explicitly: it is a BaseException by
+                    # design, so a plain `except Exception` here would let a
+                    # hung briefing exit with NO alert and NO fail ping —
+                    # silently, which is the entire bug class under repair.
                     alert("FAILED", f"daily run crashed ({type(exc).__name__}) — check the log")
                     raise
             if not ingest_ok:

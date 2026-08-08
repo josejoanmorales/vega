@@ -18,34 +18,68 @@ from __future__ import annotations
 
 import signal
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+MIN_REARM_S = 0.001  # setitimer(0) means "disarm", so an overdue outer cap uses this
 
-class HardTimeout(TimeoutError):
-    """Wall-clock cap exceeded — the operation hung rather than failing."""
+
+class HardTimeout(BaseException):
+    """Wall-clock cap exceeded — the operation hung rather than failing.
+
+    Deliberately a BaseException, NOT an Exception (review finding): the
+    briefing/execution path it guards contains eight separate
+    `except Exception` handlers — "unreachable venue", "one bad order must not
+    stop the batch", "unknown earnings is an acceptable answer" — every one of
+    which would otherwise swallow the cap and quietly convert a hung pipeline
+    into a benign-looking vendor miss. Like KeyboardInterrupt and SystemExit,
+    a wall-clock abort is control flow, not an error the local code may
+    handle. Cleanup still runs: BaseException unwinds `finally` normally.
+
+    A handler that genuinely wants it (only `run.__main__._ingest_with_retry`,
+    which degrades on a hung ingest) must name it explicitly."""
 
 
 @contextmanager
 def hard_timeout(seconds: float, what: str = "operation") -> Iterator[None]:
     """Raise `HardTimeout` in the main thread if the block outruns `seconds`.
 
+    NESTS CORRECTLY, which matters more than it sounds: there is one process
+    itimer, so a naive inner block's `setitimer(0)` on exit would cancel an
+    enclosing cap and the outer deadline would be silently lost forever
+    (review finding — the outer cap simply never fired again). An inner cap
+    is therefore clamped to whatever the outer has left (the tighter deadline
+    always wins — an inner block must never be able to EXTEND an outer
+    budget), and the outer's remaining time is re-armed on the way out.
+
     No-ops (with the block still running normally) when it cannot arm a
     signal — off the main thread, or on a platform without SIGALRM. That is
-    deliberate: a cap that cannot be armed must not break the caller, and the
-    only current caller runs on the main thread of a CLI process.
+    deliberate: a cap that cannot be armed must not break the caller.
     """
     if seconds <= 0 or threading.current_thread() is not threading.main_thread():
         yield
         return
 
-    def _fire(signum: int, frame: object) -> None:
-        raise HardTimeout(f"{what} exceeded its {seconds:g}s wall-clock cap (hung, not failed)")
+    outer_remaining = signal.getitimer(signal.ITIMER_REAL)[0]
+    outer_handler = signal.getsignal(signal.SIGALRM)
+    nested = outer_remaining > 0
+    effective = min(seconds, outer_remaining) if nested else seconds
 
-    previous = signal.signal(signal.SIGALRM, _fire)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
+    def _fire(signum: int, frame: object) -> None:
+        raise HardTimeout(f"{what} exceeded its {effective:g}s wall-clock cap (hung, not failed)")
+
+    started = time.monotonic()
+    signal.signal(signal.SIGALRM, _fire)
+    signal.setitimer(signal.ITIMER_REAL, effective)
     try:
         yield
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)  # cancel before restoring
-        signal.signal(signal.SIGALRM, previous)
+        signal.setitimer(signal.ITIMER_REAL, 0)  # disarm ours before restoring
+        signal.signal(signal.SIGALRM, outer_handler)
+        if nested:
+            # Hand the outer cap back the time it still had. Already overdue
+            # (its deadline passed inside our block) => fire as soon as the
+            # caller yields control, rather than dropping it.
+            left = outer_remaining - (time.monotonic() - started)
+            signal.setitimer(signal.ITIMER_REAL, max(left, MIN_REARM_S))

@@ -101,8 +101,16 @@ async function refreshStatus() {
     return s;
   }
   runBtn.disabled = (s.state === 'running');
-  statusLine.textContent = `${s.state} — run ${s.run_id} started ${s.started_at}` +
+  const line = `${s.state} — run ${s.run_id} started ${s.started_at}` +
     (s.finished_at ? ` finished ${s.finished_at} (exit ${s.returncode})` : '');
+  // stuck/degraded/failed are ALERT states — rendering them in the same plain
+  // text as "succeeded" is how a dead pipeline goes unnoticed on a dashboard
+  // somebody glances at (WI-129 review).
+  if (['stuck', 'degraded', 'failed'].includes(s.state)) {
+    statusLine.innerHTML = `<span class="flag-yes">${escapeHtml(line)}</span>`;
+  } else {
+    statusLine.textContent = line;
+  }
   logTail.style.display = 'block';
   logTail.textContent = s.log_tail || '';
   return s;

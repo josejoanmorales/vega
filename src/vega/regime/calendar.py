@@ -61,5 +61,10 @@ def next_earnings(symbol: str) -> str | None:
         if dates:
             return str(min(dates))
     except Exception:  # noqa: BLE001 — vendor call; unknown is an acceptable answer
+        # NOTE: HardTimeout is a BaseException precisely so it does NOT land
+        # here. "Unknown earnings" is an acceptable answer to a vendor error;
+        # it is NOT an acceptable answer to the pipeline's wall-clock cap
+        # expiring, which must terminate the run rather than be recorded as a
+        # gate input (WI-129 review).
         return None
     return None

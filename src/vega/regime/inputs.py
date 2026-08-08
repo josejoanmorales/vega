@@ -22,7 +22,16 @@ TIMEOUT = 30
 
 def fetch_vix(days: int, root: Path = snapshot.DATA_ROOT) -> pd.DataFrame:
     """Daily ^VIX closes via yfinance; snapshotted raw; returns [date, close]."""
-    raw = yf.download(tickers="^VIX", period=f"{days}d", auto_adjust=False, progress=False)
+    # Explicit timeout (WI-129 review): this is the same untimed yf.download
+    # call shape that wedged the pipeline for 3d13h in ingest, and it runs on
+    # the briefing path that evaluates exits and places orders.
+    raw = yf.download(
+        tickers="^VIX",
+        period=f"{days}d",
+        auto_adjust=False,
+        progress=False,
+        timeout=TIMEOUT,
+    )
     if isinstance(raw.columns, pd.MultiIndex):
         raw = cast(pd.DataFrame, raw.xs("^VIX", axis=1, level=1))
     frame = pd.DataFrame(

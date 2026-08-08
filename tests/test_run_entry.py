@@ -281,3 +281,39 @@ def test_stuck_pings_fail(tmp_path: Path) -> None:
         proc = _heartbeat_run(lock, _OK_INGEST)
     assert proc.returncode == 5, proc.stdout + proc.stderr
     assert "PING[fail]" in proc.stdout
+
+
+# ---- the briefing (order-placing) path is capped too ------------------------
+
+
+def test_a_hung_briefing_fails_hard_and_alerts(tmp_path: Path) -> None:
+    """Unlike ingest there is no stored-data fallback: if the briefing hangs,
+    nothing was monitored and no orders were placed, so it must fail LOUD
+    rather than degrade. Regression for the review finding that this path —
+    which places orders — had no cap at all."""
+    snippet = (
+        "import functools, sys\n"
+        "from pathlib import Path\n"
+        "import vega.common.runlock as rl\n"
+        "import vega.run.__main__ as m\n"
+        f"lock = Path({str(tmp_path / 'run.lock')!r})\n"
+        "m.acquire_run_lock = functools.partial(rl.acquire_run_lock, lock)\n"
+        "m.BRIEFING_CAP_S = 0.4\n"
+        "m.notify = lambda t, msg: print(f'NOTIFY: {t}')\n"
+        "m.heartbeat_ping = lambda kind='', detail='': print(f'PING[{kind or \"ok\"}]')\n"
+        "m.ingest = type('X', (), {'run': staticmethod(lambda days=7: "
+        "type('S', (), {'clean_rows':0,'quarantined_rows':0,'frozen_rows':0,"
+        "'drift_rows':0,'dates':()})())})\n"
+        "import time as _t\n"
+        "m.run_briefing = lambda: _t.sleep(60)\n"
+        "sys.argv = ['vega.run']\n"
+        "m.main()\n"
+    )
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", snippet], capture_output=True, text=True, timeout=60
+    )
+    assert proc.returncode != 0
+    assert proc.returncode not in (3, 4), "a hung briefing is not a skip or a degrade"
+    assert "NOTIFY: Vega pipeline FAILED" in proc.stdout
+    assert "PING[fail]" in proc.stdout  # the external watchdog is told too
+    assert "HardTimeout" in proc.stderr
