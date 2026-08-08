@@ -207,3 +207,77 @@ def test_a_briefly_held_lock_still_skips_quietly(tmp_path: Path) -> None:
     assert proc.returncode == 3, proc.stdout + proc.stderr
     assert "already in progress" in proc.stdout
     assert "NOTIFY" not in proc.stdout
+
+
+# ---- heartbeat wiring: which outcomes ping what -----------------------------
+
+_HEARTBEAT_SNIPPET = """
+import functools, sys
+from pathlib import Path
+import vega.common.runlock as rl
+import vega.run.__main__ as m
+
+lock = Path(LOCK_PATH)
+m.RETRY_DELAY_S = 0.1
+m.INGEST_RETRY_DELAY_S = 0.1
+m.acquire_run_lock = functools.partial(rl.acquire_run_lock, lock)
+m.held_for_seconds = functools.partial(rl.held_for_seconds, lock)
+m.holder = functools.partial(rl.holder, lock)
+m.notify = lambda title, message: True
+m.heartbeat_ping = lambda kind="", detail="": print(f"PING[{kind or 'ok'}]")
+m.ingest = type("X", (), {"run": staticmethod(INGEST_BEHAVIOR)})
+m.run_briefing = lambda: print("BRIEFING RAN")
+sys.argv = ["vega.run"]
+m.main()
+"""
+
+_OK_INGEST = (
+    "lambda days=7: type('S', (), {'clean_rows':0,'quarantined_rows':0,"
+    "'frozen_rows':0,'drift_rows':0,'dates':()})()"
+)
+
+
+def _heartbeat_run(lock: Path, ingest_behavior: str) -> subprocess.CompletedProcess[str]:
+    snippet = _HEARTBEAT_SNIPPET.replace("LOCK_PATH", repr(str(lock))).replace(
+        "INGEST_BEHAVIOR", ingest_behavior
+    )
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-c", snippet], capture_output=True, text=True, timeout=60
+    )
+
+
+def test_success_pings_start_then_ok(tmp_path: Path) -> None:
+    proc = _heartbeat_run(tmp_path / "run.lock", _OK_INGEST)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # start BEFORE the work: a start with no completion is what reveals a wedge
+    assert proc.stdout.index("PING[start]") < proc.stdout.index("BRIEFING RAN")
+    assert "PING[ok]" in proc.stdout
+
+
+def test_degraded_pings_fail_not_ok(tmp_path: Path) -> None:
+    # Exits ran, but the data is stale — the watchdog must not go green.
+    behaviour = "lambda days=7: (_ for _ in ()).throw(ConnectionError('vendor down'))"
+    proc = _heartbeat_run(tmp_path / "run.lock", behaviour)
+    assert proc.returncode == 4, proc.stdout + proc.stderr
+    assert "PING[start]" in proc.stdout
+    assert "PING[fail]" in proc.stdout
+    assert "PING[ok]" not in proc.stdout
+
+
+def test_a_genuine_skip_pings_nothing(tmp_path: Path) -> None:
+    """The other run owns this cycle and sends its own completion. Pinging
+    here would let a skip stand in for work this process never did."""
+    lock = tmp_path / "run.lock"
+    with acquire_run_lock(lock):
+        proc = _heartbeat_run(lock, _OK_INGEST)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    assert "PING[" not in proc.stdout
+
+
+def test_stuck_pings_fail(tmp_path: Path) -> None:
+    lock = tmp_path / "run.lock"
+    with acquire_run_lock(lock):
+        os.utime(lock, (time.time() - 4 * 3600, time.time() - 4 * 3600))
+        proc = _heartbeat_run(lock, _OK_INGEST)
+    assert proc.returncode == 5, proc.stdout + proc.stderr
+    assert "PING[fail]" in proc.stdout

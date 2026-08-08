@@ -32,6 +32,7 @@ import time
 import traceback
 
 from vega.briefing.__main__ import main as run_briefing
+from vega.common.heartbeat import ping as heartbeat_ping
 from vega.common.runlock import (
     EXIT_DEGRADED,
     EXIT_SKIPPED,
@@ -116,22 +117,36 @@ def _pipeline(days: int) -> bool:
     return ingest_ok
 
 
+def alert(title: str, detail: str, heartbeat: str = "fail") -> None:
+    """Every bad-outcome announcement goes through here, so no path can grow
+    an on-machine notification without also telling the external watcher —
+    the local channel cannot report a wedged or offline machine, and the
+    external one cannot pop a banner. They are not redundant."""
+    notify(f"Vega pipeline {title}", detail)
+    heartbeat_ping(heartbeat, f"{title}: {detail}")
+
+
 def main() -> None:
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 7
     for attempt in (1, 2):
         try:
             with acquire_run_lock():
+                # Tell the watchdog we began BEFORE any work: a start with no
+                # matching completion is precisely a wedge, and it is the only
+                # signal that survives one (WI-129 review blocker — launchd
+                # never starts a second run to notice locally).
+                heartbeat_ping("start", f"run started (days={days})")
                 try:
                     ingest_ok = _pipeline(days)
-                except Exception:
-                    notify("Vega pipeline FAILED", "daily run crashed — check the run log")
+                except Exception as exc:
+                    alert("FAILED", f"daily run crashed ({type(exc).__name__}) — check the log")
                     raise
             if not ingest_ok:
-                notify(
-                    "Vega pipeline DEGRADED",
-                    "ingest failed; briefing/exits ran on stored data",
-                )
+                # Deliberately a FAIL ping, not ok: exits were evaluated, but
+                # the data is stale and a human should know that today.
+                alert("DEGRADED", "ingest failed; briefing/exits ran on stored data")
                 sys.exit(EXIT_DEGRADED)
+            heartbeat_ping("", "run completed")
             return
         except RunInProgress:
             if attempt == 1:
@@ -150,8 +165,11 @@ def main() -> None:
                     f"since {who.get('started_at', '?')} — pipeline is NOT running"
                 )
                 print(f"STUCK RUN: {detail}", file=sys.stderr)
-                notify("Vega pipeline STUCK", detail)
+                alert("STUCK", detail)
                 sys.exit(EXIT_STUCK)
+            # A genuine race: the OTHER run owns this cycle and will send its
+            # own completion ping. Staying silent here is deliberate — pinging
+            # would let a skip stand in for work this process did not do.
             print("a pipeline run is already in progress — skipping this trigger")
             sys.exit(EXIT_SKIPPED)
 
