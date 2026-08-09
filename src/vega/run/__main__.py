@@ -104,8 +104,13 @@ def _ingest_with_retry(days: int) -> bool:
                 time.sleep(INGEST_RETRY_DELAY_S)
                 continue
             return False
+        state = (
+            f"PARTIAL (failed: {', '.join(summary.failed_sleeves)})"
+            if summary.failed_sleeves
+            else "ok"
+        )
         print(
-            f"ingest ok — added: {summary.clean_rows} clean / "
+            f"ingest {state} — added: {summary.clean_rows} clean / "
             f"{summary.quarantined_rows} quarantined, frozen (already stored): "
             f"{summary.frozen_rows}, vendor drift on frozen rows: {summary.drift_rows}, "
             f"dates touched: {len(summary.dates)}"

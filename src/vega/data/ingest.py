@@ -6,16 +6,19 @@ Run: uv run python -m vega.data.ingest [days]
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
 
-from vega.common.timeouts import hard_timeout
+from vega.common.timeouts import HardTimeout, hard_timeout
 from vega.data import snapshot
 from vega.data.sources import alpaca_src, binance_src, coingecko_src, yfinance_src
+from vega.data.types import BAR_COLUMNS
 from vega.data.universe import load_universe, symbols
 from vega.data.validate import CrossCheckResult, cross_check
 
@@ -29,6 +32,10 @@ from vega.data.validate import CrossCheckResult, cross_check
 WALL_CLOCK_CAP_S = 900.0
 
 
+class IngestError(RuntimeError):
+    """No sleeve produced data — nothing can be written this run."""
+
+
 @dataclass(frozen=True)
 class IngestSummary:
     clean_rows: int  # rows actually added to the store this run
@@ -36,6 +43,16 @@ class IngestSummary:
     frozen_rows: int  # incoming rows skipped because their (symbol, date) is frozen
     drift_rows: int  # frozen rows whose freshly fetched close differed (vendor revision)
     dates: tuple[str, ...]
+    # Sleeves that failed while others succeeded — a PARTIAL ingest. Empty on a
+    # fully clean run. Never silently empty on failure: if every sleeve fails,
+    # run() raises IngestError instead of returning a summary that looks fine.
+    failed_sleeves: tuple[str, ...] = ()
+
+
+_EMPTY_RESULT = CrossCheckResult(
+    clean=pd.DataFrame(columns=list(BAR_COLUMNS)),
+    quarantine=pd.DataFrame(columns=list(BAR_COLUMNS)),
+)
 
 
 def _write_result(
@@ -78,20 +95,16 @@ def run(
         return _run(days, root)
 
 
-def _run(days: int, root: Path) -> IngestSummary:
-    load_dotenv()
-    universe = load_universe()
-    equities = symbols(universe, "equity", "etf")
-    crypto = [e for e in universe if e.asset_class == "crypto"]
-
-    today = datetime.now(UTC).date().isoformat()
-    start = (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
-
+def _equity_sleeve(equities: list[str], start: str, today: str, root: Path) -> CrossCheckResult:
     yf_bars = yfinance_src.fetch_daily(equities, start, today)
     snapshot.snapshot_raw_frame("yfinance", "bars", yf_bars, root)
     alp_bars = alpaca_src.fetch_daily(equities, start, today)
     snapshot.snapshot_raw_frame("alpaca_iex", "bars", alp_bars, root)
+    # strictness: only fully completed sessions enter the clean store
+    return cross_check(yf_bars[yf_bars["date"] < today], alp_bars[alp_bars["date"] < today])
 
+
+def _crypto_sleeve(crypto: list[Any], days: int, root: Path) -> CrossCheckResult:
     # CoinGecko keyless access is capped at 365 days of history — the crypto sleeve's
     # window is capped with it so primary bars never outrun their cross-check source.
     crypto_days = min(days, 364)
@@ -103,13 +116,47 @@ def _run(days: int, root: Path) -> IngestSummary:
         {e.symbol: e.coingecko_id for e in crypto}, crypto_days
     )
     snapshot.snapshot_raw_json("coingecko", "market_chart", cg_raw, root)
+    return cross_check(bn_bars, cg_bars)
 
-    # strictness: only fully completed sessions enter the clean store
-    yf_bars = yf_bars[yf_bars["date"] < today]
-    alp_bars = alp_bars[alp_bars["date"] < today]
 
-    eq_result = cross_check(yf_bars, alp_bars)
-    cr_result = cross_check(bn_bars, cg_bars)
+def _run(days: int, root: Path) -> IngestSummary:
+    load_dotenv()
+    universe = load_universe()
+    equities = symbols(universe, "equity", "etf")
+    crypto = [e for e in universe if e.asset_class == "crypto"]
+
+    today = datetime.now(UTC).date().isoformat()
+    start = (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
+
+    # THE SLEEVES ARE INDEPENDENT. Previously one sequence fetched all four
+    # vendors and only then cross-checked and wrote, so ANY vendor failure
+    # discarded the work of all the others. Observed in production
+    # 2026-08-05..08: CoinGecko — the crypto CROSS-CHECK source, for a system
+    # holding only equity positions — dropped a connection every morning, and
+    # because it is fetched last the already-successful equity bars never
+    # reached the clean store. The store sat frozen for days while yfinance
+    # worked perfectly. A sleeve may now fail alone; the summary reports it so
+    # a partial ingest is visible rather than silently "fine".
+    failed: dict[str, str] = {}
+    results: dict[str, CrossCheckResult] = {}
+    sleeves: tuple[tuple[str, Callable[[], CrossCheckResult]], ...] = (
+        ("equity", lambda: _equity_sleeve(equities, start, today, root)),
+        ("crypto", lambda: _crypto_sleeve(crypto, days, root)),
+    )
+    for name, fetch in sleeves:
+        try:
+            results[name] = fetch()
+        except HardTimeout:
+            raise  # the wall-clock cap is not a per-sleeve error; abort the run
+        except Exception as exc:  # noqa: BLE001 — one vendor must not sink the others
+            failed[name] = f"{type(exc).__name__}: {exc}"
+            print(f"INGEST SLEEVE FAILED [{name}]: {failed[name]}", file=sys.stderr)
+
+    if not results:
+        raise IngestError(f"every ingest sleeve failed: {failed}")
+
+    eq_result = results.get("equity", _EMPTY_RESULT)
+    cr_result = results.get("crypto", _EMPTY_RESULT)
 
     eq_clean, eq_bad, eq_frozen, eq_drift, eq_dates = _write_result(eq_result, "equity", root)
     cr_clean, cr_bad, cr_frozen, cr_drift, cr_dates = _write_result(cr_result, "crypto", root)
@@ -121,6 +168,7 @@ def _run(days: int, root: Path) -> IngestSummary:
         frozen_rows=eq_frozen + cr_frozen,
         drift_rows=eq_drift + cr_drift,
         dates=tuple(sorted(eq_dates | cr_dates)),
+        failed_sleeves=tuple(sorted(failed)),
     )
 
 
@@ -132,6 +180,11 @@ def main() -> None:
         f"ingest ok — added: {s.clean_rows} clean / {s.quarantined_rows} quarantined, "
         f"frozen (already stored): {s.frozen_rows}, vendor drift on frozen rows: {s.drift_rows}, "
         f"dates touched: {len(s.dates)}"
+        + (
+            f" | PARTIAL — sleeves failed: {', '.join(s.failed_sleeves)}"
+            if s.failed_sleeves
+            else ""
+        )
     )
 
 

@@ -16,7 +16,7 @@ _RUN_SNIPPET = (
     "m.RETRY_DELAY_S = 0.1\n"
     "m.ingest = type('X', (), {'run': staticmethod(lambda days=7: "
     "  type('S', (), {'clean_rows':0,'quarantined_rows':0,'frozen_rows':0,"
-    "'drift_rows':0,'dates':()})())})\n"
+    "'drift_rows':0,'dates':(),'failed_sleeves':()})())})\n"
     "m.run_briefing = lambda: print('BRIEFING RAN')\n"
     "sys.argv = ['vega.run']\n"
     "m.main()\n"
@@ -115,7 +115,7 @@ def test_ingest_transient_failure_recovers_on_retry(tmp_path: Path) -> None:
         "    if calls['n'] == 1:\n"
         "        raise ConnectionError('flap')\n"
         "    return type('S', (), {'clean_rows':0,'quarantined_rows':0,'frozen_rows':0,"
-        "'drift_rows':0,'dates':()})()\n"
+        "'drift_rows':0,'dates':(),'failed_sleeves':()})()\n"
         "m.ingest = type('X', (), {'run': staticmethod(_flaky)})\n"
         "m.run_briefing = lambda: print('BRIEFING RAN')\n"
         "sys.argv = ['vega.run']\n"
@@ -139,7 +139,7 @@ def test_briefing_crash_notifies_and_fails_hard(tmp_path: Path) -> None:
     # nonzero as before, but now with a notification so it can't run silent.
     ok_ingest = (
         "lambda days=7: type('S', (), {'clean_rows':0,'quarantined_rows':0,"
-        "'frozen_rows':0,'drift_rows':0,'dates':()})()"
+        "'frozen_rows':0,'drift_rows':0,'dates':(),'failed_sleeves':()})()"
     )
     snippet = _DEGRADED_SNIPPET.replace("FAIL_BEHAVIOR", ok_ingest).replace(
         "m.run_briefing = lambda: print('BRIEFING RAN')",
@@ -233,7 +233,7 @@ m.main()
 
 _OK_INGEST = (
     "lambda days=7: type('S', (), {'clean_rows':0,'quarantined_rows':0,"
-    "'frozen_rows':0,'drift_rows':0,'dates':()})()"
+    "'frozen_rows':0,'drift_rows':0,'dates':(),'failed_sleeves':()})()"
 )
 
 
@@ -303,7 +303,7 @@ def test_a_hung_briefing_fails_hard_and_alerts(tmp_path: Path) -> None:
         "m.heartbeat_ping = lambda kind='', detail='': print(f'PING[{kind or \"ok\"}]')\n"
         "m.ingest = type('X', (), {'run': staticmethod(lambda days=7: "
         "type('S', (), {'clean_rows':0,'quarantined_rows':0,'frozen_rows':0,"
-        "'drift_rows':0,'dates':()})())})\n"
+        "'drift_rows':0,'dates':(),'failed_sleeves':()})())})\n"
         "import time as _t\n"
         "m.run_briefing = lambda: _t.sleep(60)\n"
         "sys.argv = ['vega.run']\n"

@@ -34,7 +34,19 @@ def _get_chart(coingecko_id: str, days: int) -> dict[str, Any]:
         params["interval"] = "daily"  # free tier rejects explicit interval beyond 90 days
 
     for attempt in range(MAX_RETRIES):
-        resp = requests.get(url, params=params, timeout=TIMEOUT)
+        try:
+            resp = requests.get(url, params=params, timeout=TIMEOUT)
+        except requests.exceptions.RequestException as exc:
+            # Transport-level failure (RemoteDisconnected, reset, DNS blip).
+            # Previously ONLY 429 was retried, so a single dropped connection
+            # on one of 20 symbols aborted the whole ingest — and because this
+            # is the last fetch, it discarded the already-successful EQUITY
+            # bars too. Observed daily in production 2026-08-05..08.
+            if attempt == MAX_RETRIES - 1:
+                raise
+            print(f"coingecko transport error ({exc}); retry {attempt + 1}/{MAX_RETRIES - 1}")
+            time.sleep(min(5.0 * 2**attempt, 60.0))
+            continue
         if resp.status_code == 429:
             wait = float(resp.headers.get("Retry-After", 15 * 2**attempt))
             time.sleep(min(wait, 120.0))
