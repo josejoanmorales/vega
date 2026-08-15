@@ -294,3 +294,70 @@ def test_freshness_ignores_non_date_stems(tmp_path: Path) -> None:
     _briefing(tmp_path, "zzzz-99-99", mtime_day="2026-07-24")
     f = dashboard.pipeline_freshness(tmp_path, today=date(2026, 7, 24))
     assert f["last_briefing_date"] == "2026-07-23"
+
+
+# ---- cost_audit_summary (WI-135) ------------------------------------------
+
+
+def test_cost_audit_summary_matches_the_underlying_report(tmp_path: Path, monkeypatch) -> None:
+    from vega.execution import cost_audit
+
+    monkeypatch.setattr(
+        dashboard, "load_universe", lambda: [UniverseEntry("AAA", "equity", "AAA Inc")]
+    )
+    monkeypatch.setattr(cost_audit, "load_universe", dashboard.load_universe)
+
+    ledger = LedgerStore(tmp_path / "ledger.jsonl")
+    rec = _rec(entry_ref_price=100.0)
+    ledger.append(rec)
+    ledger.append_fill(rec.id, "ord-1", 10.0, 101.0, "filled")
+
+    summary = dashboard.cost_audit_summary(ledger, root=tmp_path)
+    assert summary["implementation_shortfall"]["n"] == 1
+    assert summary["implementation_shortfall"]["mean_bps"] > 0
+    assert "caveats" in summary and isinstance(summary["caveats"], list)
+    assert summary["doctrine"]["doctrine_holds"] is None  # no execution-slippage evidence yet
+
+
+def test_cost_audit_summary_root_is_genuinely_injected(tmp_path: Path, monkeypatch) -> None:
+    """`root` must reach the underlying audit, not just be accepted and
+    ignored — proven by seeding a store ONLY at the injected path and
+    confirming the execution-slippage lookup actually finds it."""
+    import duckdb
+    import pandas as pd
+
+    from vega.execution import cost_audit
+
+    monkeypatch.setattr(
+        dashboard, "load_universe", lambda: [UniverseEntry("AAA", "equity", "AAA Inc")]
+    )
+    monkeypatch.setattr(cost_audit, "load_universe", dashboard.load_universe)
+
+    bar = pd.DataFrame(  # noqa: F841 — duckdb resolves it by name in SQL below
+        [
+            {
+                "symbol": "AAA",
+                "date": "2026-04-15",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "adj_close": 100.5,
+                "volume": 1_000_000.0,
+                "source": "yfinance",
+            }
+        ]
+    )
+    con = duckdb.connect(str(tmp_path / "vega.duckdb"))
+    con.execute("CREATE TABLE bars AS SELECT * FROM bar")
+    con.close()
+
+    ledger = LedgerStore(tmp_path / "ledger.jsonl")
+    rec = _rec(entry_ref_price=100.0)
+    ledger.append(rec)
+    ledger.append_fill(
+        rec.id, "ord-1", 10.0, 100.5, "filled", filled_at="2026-04-15T09:30:00-04:00"
+    )
+
+    summary = dashboard.cost_audit_summary(ledger, root=tmp_path)
+    assert summary["execution_slippage_entries"]["n"] == 1

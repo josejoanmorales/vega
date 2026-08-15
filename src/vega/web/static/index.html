@@ -52,6 +52,11 @@
   </section>
 
   <section>
+    <h2>Cost-model audit</h2>
+    <div id="cost-audit"></div>
+  </section>
+
+  <section>
     <h2>Symbol inspector</h2>
     <input id="inspect-input" placeholder="e.g. CDW" maxlength="10">
     <button id="inspect-btn">Inspect</button>
@@ -224,6 +229,33 @@ async function loadFailures() {
   div.innerHTML = html + '</table>';
 }
 
+function fmtStat(s, label) {
+  if (s.n === 0) return `<tr><td>${escapeHtml(label)}</td><td colspan="3" class="dim">n=0 — no data yet</td></tr>`;
+  return `<tr><td>${escapeHtml(label)}</td><td>${s.n}</td>` +
+    `<td>${s.mean_bps >= 0 ? '+' : ''}${s.mean_bps.toFixed(2)}bps</td>` +
+    `<td>${s.median_bps >= 0 ? '+' : ''}${s.median_bps.toFixed(2)}bps</td></tr>`;
+}
+
+async function loadCostAudit() {
+  const r = await (await fetch('/api/cost-audit')).json();
+  const div = document.getElementById('cost-audit');
+  let html = '<p class="notice">Read-only — reports only, never retunes a cost constant.</p>';
+  html += '<table><tr><th>metric</th><th>n</th><th>mean</th><th>median</th></tr>';
+  html += fmtStat(r.implementation_shortfall, 'Implementation shortfall (entries)');
+  html += fmtStat(r.execution_slippage_entries, 'Execution slippage (entries)');
+  html += fmtStat(r.execution_slippage_exits, 'Execution slippage (exits)');
+  html += '</table>';
+  const holds = r.doctrine.doctrine_holds;
+  const flagClass = holds === false ? 'flag-yes' : holds === true ? 'flag-no' : 'dim';
+  html += `<p>Pessimism doctrine: <span class="${flagClass}">${escapeHtml(r.doctrine.detail)}</span></p>`;
+  if (r.caveats.length) {
+    html += '<p class="notice">Caveats:</p><ul>';
+    for (const c of r.caveats) html += `<li class="dim">${escapeHtml(c)}</li>`;
+    html += '</ul>';
+  }
+  div.innerHTML = html;
+}
+
 document.getElementById('inspect-btn').addEventListener('click', async () => {
   const input = document.getElementById('inspect-input');
   const div = document.getElementById('inspect-result');
@@ -277,6 +309,7 @@ document.getElementById('inspect-btn').addEventListener('click', async () => {
   await loadPositions();
   await loadSignalHealth();
   await loadFailures();
+  await loadCostAudit();
 })();
 </script>
 </body>

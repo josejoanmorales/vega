@@ -207,3 +207,9 @@ def test_inspect_path_rejects_unexpected_characters(live_server: int) -> None:
     # INSPECT_PATH_RE only allows alnum/./- -- path traversal or injection 404s
     status, _ = _get(live_server, "/api/inspect/../../etc/passwd")
     assert status == 404
+
+
+def test_cost_audit_endpoint_delegates_to_dashboard(live_server: int, monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "cost_audit_summary", lambda ledger=None: {"caveats": []})
+    status, body = _get(live_server, "/api/cost-audit")
+    assert status == 200 and body == {"caveats": []}

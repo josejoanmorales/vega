@@ -58,6 +58,7 @@ class LedgerStore:
         side: str = "buy",
         reason: str | None = None,
         session: str | None = None,
+        filled_at: str | None = None,
     ) -> str:
         """Paper-fill record linked to a recommendation (added by WI-061;
         append-only). `side`/`reason`/`session` are additive (WI-087): a sell
@@ -66,7 +67,11 @@ class LedgerStore:
         gap_stop/stop/profit_partial/time_stop), and `session` — the store
         session the exit was DECIDED against (never the wall-clock fill time),
         the one piece of state the trail's high-water-close window needs.
-        Existing buy-fill callers are unaffected (defaults preserve old shape).
+        `filled_at` is additive too (WI-135): Alpaca's own execution
+        timestamp, distinct from `at` below (when reconciliation OBSERVED the
+        fill) — cost/slippage analysis needs the real one, since `at` can lag
+        a run cycle. Existing buy-fill callers are unaffected (defaults
+        preserve old shape).
         """
         if ref_id not in {r["id"] for r in self.entries()}:
             raise ValueError(f"fill references unknown recommendation {ref_id}")
@@ -84,6 +89,7 @@ class LedgerStore:
                 "side": side,
                 "reason": reason,
                 "session": session,
+                "filled_at": filled_at,
             }
         )
         return fid

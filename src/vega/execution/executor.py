@@ -44,6 +44,13 @@ class OrderResult:
     qty: float
     filled_avg_price: float | None
     status: str
+    # Alpaca's own execution timestamp (WI-135), NOT when we happened to poll
+    # it. Additive/optional so every existing construction site stays valid —
+    # the wall-clock `at` on a fill record is when reconciliation OBSERVED the
+    # fill, and can lag the true session by a run cycle (confirmed against
+    # production data across the outage window); slippage analysis needs the
+    # real one.
+    filled_at: str | None = None
 
 
 class TradingBackend(Protocol):
@@ -89,6 +96,7 @@ class AlpacaPaperBackend:
                 float(order.filled_avg_price) if order.filled_avg_price is not None else None
             ),
             status=str(order.status.value if hasattr(order.status, "value") else order.status),
+            filled_at=(order.filled_at.isoformat() if order.filled_at is not None else None),
         )
 
     def _submit_market_order(
@@ -194,6 +202,7 @@ def reconcile_fills(ledger: LedgerStore, backend: TradingBackend) -> int:
                 result.qty,
                 result.filled_avg_price,
                 result.status,
+                filled_at=result.filled_at,
                 **identity,
             )
         elif result.status in TERMINAL_UNFILLED_STATUSES:
@@ -260,6 +269,7 @@ def execute_pending(
                 qty=result.qty,
                 price=result.filled_avg_price,
                 status=result.status,
+                filled_at=result.filled_at,
             )
             submitted += 1
         except Exception as exc:  # noqa: BLE001 — one bad order must not stop the batch

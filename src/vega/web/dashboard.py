@@ -22,6 +22,7 @@ from vega.common.doctrine import DEFAULT_TIME_STOP_SESSIONS
 from vega.common.paths import BRIEFINGS_DIR
 from vega.data import snapshot
 from vega.data.universe import load_universe
+from vega.execution.cost_audit import audit as run_cost_audit
 from vega.execution.executor import read_failures
 from vega.execution.exits import reconstruct_positions
 from vega.ledger.store import LedgerStore
@@ -151,6 +152,35 @@ def signal_health(ledger: LedgerStore | None = None) -> list[dict[str, Any]]:
 def failures() -> list[dict[str, Any]]:
     """The exec-failures log, newest first (WI-089-c2)."""
     return list(reversed(read_failures()))
+
+
+def cost_audit_summary(
+    ledger: LedgerStore | None = None, root: Path = snapshot.DATA_ROOT
+) -> dict[str, Any]:
+    """Cost-model validation against real fills (WI-135) — read-only, same
+    contract as every other dashboard view. See `execution.cost_audit`'s
+    module docstring for what this does and does not prove. `root` is
+    explicit (matching `_max_session` below) so tests can inject a store
+    without depending on import-time binding of `cost_audit.audit`'s own
+    default."""
+    report = run_cost_audit(ledger or LedgerStore(), root=root)
+
+    def _stat(s: Any) -> dict[str, Any]:
+        return {"n": s.n, "mean_bps": s.mean_bps, "median_bps": s.median_bps}
+
+    return {
+        "implementation_shortfall": _stat(report.implementation_shortfall),
+        "execution_slippage_entries": _stat(report.execution_slippage_entries),
+        "execution_slippage_exits": _stat(report.execution_slippage_exits),
+        "doctrine": {
+            "n": report.doctrine.n,
+            "mean_execution_slippage_bps": report.doctrine.mean_execution_slippage_bps,
+            "mean_backtest_tier_bps": report.doctrine.mean_backtest_tier_bps,
+            "doctrine_holds": report.doctrine.doctrine_holds,
+            "detail": report.doctrine.detail,
+        },
+        "caveats": list(report.caveats),
+    }
 
 
 def inspect_symbol(symbol: str, ledger: LedgerStore | None = None) -> dict[str, Any]:

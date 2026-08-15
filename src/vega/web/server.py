@@ -115,6 +115,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, dashboard.signal_health())
             if path == "/api/failures":
                 return self._send(200, dashboard.failures())
+            if path == "/api/cost-audit":
+                return self._send(200, dashboard.cost_audit_summary())
             m = BRIEFING_PATH_RE.match(path)
             if m:
                 briefing_date = m.group(1)  # regex-validated: date-shaped only, no traversal

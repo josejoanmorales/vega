@@ -408,6 +408,7 @@ def execute_exits(
                 side="sell",
                 reason=d.reason,
                 session=as_of,
+                filled_at=result.filled_at,
             )
             submitted += 1
         except Exception as exc:  # noqa: BLE001 — one bad order must not stop the batch
