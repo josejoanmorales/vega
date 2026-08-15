@@ -14,6 +14,7 @@ from vega.data.universe import load_universe, tradable_symbols
 from vega.lifecycle.rationale import RationaleRegistry
 from vega.signals.breakout_volume import BreakoutVolumeSignal
 from vega.signals.crypto_breakout import N_SESSIONS_GRID, CryptoBreakoutSignal
+from vega.signals.crypto_oversold_reversion import CryptoOversoldReversionSignal
 from vega.signals.oversold_reversion import OversoldReversionSignal
 from vega.signals.trend_pullback import TrendPullbackSignal
 
@@ -91,12 +92,15 @@ def main() -> None:
     for label, signal in equity_signals:
         _run(label, signal, equity_universe, "equity", rationale, registry)
 
-    # WI-136: the crypto sleeve's first family. The store's crypto history is
-    # CoinGecko-cross-check-capped to ~1yr, shorter than equity's ~2yr — the
-    # printed data_span makes that visible on every run rather than silently
-    # comparing a 1yr crypto verdict to a 2yr equity one.
+    # WI-136/WI-145: the crypto sleeve's families. The store's crypto history
+    # is CoinGecko-cross-check-capped to ~1yr, shorter than equity's ~2yr —
+    # the printed data_span makes that visible on every run rather than
+    # silently comparing a 1yr crypto verdict to a 2yr equity one.
     crypto_signals: list[tuple[str, Signal]] = [
         (f"crypto_breakout_v1[N={n}]", CryptoBreakoutSignal(n_sessions=n)) for n in N_SESSIONS_GRID
+    ] + [
+        (f"crypto_oversold_reversion_v1[k={k}]", CryptoOversoldReversionSignal(k=k))
+        for k in (2.0, 2.5)
     ]
     for label, signal in crypto_signals:
         _run(label, signal, crypto_universe, "crypto", rationale, registry)
