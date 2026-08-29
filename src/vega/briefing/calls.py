@@ -239,16 +239,22 @@ def build_calls(
     view = MarketView(frame, as_of)
 
     scored_proposals: list[tuple[EntryProposal, float]] = []
+    signal_rejections: list[RenderedRejection] = []
     for fam in eligible:
         signal = FAMILY_SIGNALS[fam.family](**fam.justifying_params)
         for proposal in signal.scan(view, universe):
             scored_proposals.append((proposal, fam.dev_sharpe))
+        # A signal that filters its own candidates (WI-228's ResidualGate) reports
+        # WHY here, so a rejection made before sizing is as visible as one made
+        # after it. Signals without the attribute are unaffected.
+        for symbol, reason, detail in getattr(signal, "last_rejections", ()):
+            signal_rejections.append(RenderedRejection(symbol, fam.family, reason, detail))
     scored_proposals.sort(key=_rank_key)
 
     open_positions = [to_heat(p) for p in reconstruct_positions(ledger, frame, as_of)]
     held = {p.symbol for p in open_positions}
     calls: list[RenderedCall] = []
-    rejections: list[RenderedRejection] = []
+    rejections: list[RenderedRejection] = list(signal_rejections)
 
     for proposal, _dev_sharpe in scored_proposals:
         symbol = proposal.symbol
@@ -350,7 +356,11 @@ def build_calls(
 
     reason = None
     if not calls:
-        reason = _no_trade_reason(len(scored_proposals), rejections)
+        # A signal-level rejection is evidence a candidate DID exist and was
+        # vetoed, so it counts toward 'candidates considered'. Without this the
+        # briefing reports 'no qualifying setups found' on a day the gate fired,
+        # which is the same class of false claim this function was written to stop.
+        reason = _no_trade_reason(len(scored_proposals) + len(signal_rejections), rejections)
 
     return CallsResult(
         as_of=as_of,
