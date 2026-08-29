@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -52,6 +53,21 @@ def _exits_table(exits: tuple[ExitDecision, ...]) -> str:
     lines = ["| symbol | reason | qty | detail |", "|---|---|---|---|"]
     lines += [f"| {e.symbol} | {e.reason} | {e.qty:.6f} | {e.detail} |" for e in exits]
     return "\n".join(lines) + "\n"
+
+
+def _bearish_table(bearish: tuple[dict[str, Any], ...]) -> str:
+    rows = ["| direction | symbol | detail | thesis | invalidation |", "|---|---|---|---|---|"]
+    for b in bearish:
+        detail = (
+            f"cut {float(b['target_fraction']):.0%}"
+            if b["direction"] == "reduce"
+            else f"until {b.get('expires_on', '')}"
+        )
+        rows.append(
+            f"| **{b['direction']}** | {b['symbol']} | {detail} | {b['thesis']} "
+            f"| {b.get('invalidation', '')} |"
+        )
+    return "\n".join(rows)
 
 
 def _signal_health_table(outcomes: tuple[DemotionOutcome, ...]) -> str:
@@ -123,6 +139,32 @@ def render(data: BriefingData) -> str:
             f"- `{f.family}` ({f.state}) — justifying run `{f.justifying_run_id}`, "
             f"params {f.justifying_params}"
             for f in data.eligible_families
+        ]
+    if data.bearish:
+        # Its own heading, above signal health and below the ranked table: a bearish
+        # decision is an action, not a footnote, and it is NOT a call to buy anything.
+        parts += [
+            "",
+            "## Bearish decisions — reduce / avoid",
+            "",
+            "_No shorting: `reduce` cuts an existing position, `avoid` declines to open "
+            "one. Neither places an opening order (STRATEGY.md §3)._",
+            "",
+            _bearish_table(data.bearish),
+        ]
+    if data.avoided_scorecard is not None:
+        sc = data.avoided_scorecard
+        avg = sc.get("avg_avoided_return_pct")
+        parts += [
+            "",
+            "### Avoided-call scorecard (counterfactual — never realized P&L)",
+            "",
+            f"- {sc['n_resolved']} resolved, {sc['n_open']} still open; "
+            f"{sc['n_right']} declined a loss"
+            + (f"; mean forgone move {avg:+.2f}%" if avg is not None else ""),
+            "- _Measures what holding would have returned, gross. It does not model where "
+            "the capital went instead, so this is evidence the setup was read correctly — "
+            "not evidence of alpha._",
         ]
     if data.signal_health:
         parts += ["", "## Signal health", "", _signal_health_table(data.signal_health)]

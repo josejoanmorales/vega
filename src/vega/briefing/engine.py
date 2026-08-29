@@ -43,6 +43,11 @@ class BriefingData:
     # verdicts (empty defaults keep pre-WI-087 rendering byte-identical).
     exits: tuple[ExitDecision, ...] = ()
     signal_health: tuple[DemotionOutcome, ...] = ()
+    # WI-229, additive: bearish decisions live in their OWN lane, never mixed into
+    # `calls`. A reader who skims the ranked table must not be able to mistake
+    # "do not open this" for something the system bought.
+    bearish: tuple[dict[str, Any], ...] = ()
+    avoided_scorecard: dict[str, Any] | None = None
 
 
 def top_movers(bars: pd.DataFrame) -> pd.DataFrame:
