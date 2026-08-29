@@ -25,6 +25,7 @@ from typing import Any, Protocol, cast
 from vega.common.appendlog import AppendLog
 from vega.common.paths import DATA_ROOT
 from vega.ledger.store import LedgerStore
+from vega.ledger.types import POSITION_DIRECTIONS
 
 FAILURES_PATH = DATA_ROOT / "ledger/exec_failures.jsonl"
 FILL_POLL_ATTEMPTS = 5
@@ -162,7 +163,7 @@ def pending_longs(ledger: LedgerStore) -> list[dict[str, Any]]:
     return [
         rec
         for rec, fill in ledger.latest_with_fills()
-        if rec["direction"] == "long" and fill is None
+        if rec["direction"] in POSITION_DIRECTIONS and fill is None
     ]
 
 

@@ -26,6 +26,7 @@ from vega.common import db
 from vega.data import snapshot
 from vega.execution.exits import entry_session_for
 from vega.ledger.store import LedgerStore
+from vega.ledger.types import POSITION_DIRECTIONS
 from vega.lifecycle.demotion import DemotionVerdict, check_auto_demotion
 from vega.lifecycle.lifecycle import LifecycleRegistry, is_eligible_state
 
@@ -59,7 +60,10 @@ def closed_round_trips(ledger: LedgerStore, calendar: list[str]) -> dict[str, li
     latest_session = calendar[-1] if calendar else ""
     trades_by_family: dict[str, list[LiveTrade]] = {}
     for rec, fills in ledger.latest_with_all_fills():
-        if rec["direction"] != "long":
+        if rec["direction"] not in POSITION_DIRECTIONS:
+            # WI-229: an `avoid` is scored counterfactually (lifecycle/avoided.py) and must
+            # NEVER reach here — a hypothetical return mixed into the realised track record
+            # would corrupt the one number the whole product is judged on.
             continue
         buy_fills = [f for f in fills if f.get("side", "buy") == "buy"]
         if not buy_fills or buy_fills[-1].get("price") is None:

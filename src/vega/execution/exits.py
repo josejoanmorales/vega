@@ -48,11 +48,16 @@ from vega.execution.executor import (
     record_failure,
 )
 from vega.ledger.store import LedgerStore
+from vega.ledger.types import POSITION_DIRECTIONS
 from vega.risk.heat import OpenPositionHeat
 
 # simulate.py's own exit-reason vocabulary — reused verbatim so live and
 # backtest round-trips are directly comparable/groupable.
-EXIT_REASONS = ("gap_stop", "stop", "profit_partial", "time_stop")
+# The first four mirror backtest/simulate.py exactly, so live and simulated exits stay
+# comparable. `reduce` (WI-229) deliberately has no backtest counterpart: no signal family
+# emits a reduce, so it can only ever arise from a live decision, and adding it to the
+# simulator would invent trades the registered rationales never claimed.
+EXIT_REASONS = ("gap_stop", "stop", "profit_partial", "time_stop", "reduce")
 
 
 @dataclass(frozen=True)
@@ -277,8 +282,8 @@ def reconstruct_positions(
     calendar = trading_calendar(frame)
     positions = []
     for rec, fills in ledger.latest_with_all_fills():
-        if rec["direction"] != "long":
-            continue
+        if rec["direction"] not in POSITION_DIRECTIONS:
+            continue  # only inventory-acquiring directions become positions (WI-229)
         pos = _reconstruct_one(rec, fills, frame, calendar, as_of)
         if pos is not None:
             positions.append(pos)
@@ -415,3 +420,53 @@ def execute_exits(
             record_failure(d.ref_id, d.symbol, f"exit ({d.reason}) failed: {exc}", failures_path)
             failed += 1
     return submitted, failed
+
+
+def pending_reductions(ledger: LedgerStore, frame: pd.DataFrame, as_of: str) -> list[ExitDecision]:
+    """Live `reduce` recommendations turned into partial sells (WI-229).
+
+    A reduce is a partial exit with a different trigger, so it reuses `execute_exits`
+    wholesale rather than growing a second order path — there is exactly one place in
+    this system that sells, and one place that can be got wrong.
+
+    THE SUBTLE PART: the decision carries the POSITION's ref_id, not the reduce
+    record's. Fills join a recommendation's supersede chain, so a sell booked against
+    the reduce record would sit in a chain that owns no inventory — the position would
+    still read as fully held, and the reduction would be invisible to heat, to exits
+    and to the track record. Idempotency keys off the same fact: a reduce is done once
+    a sell carrying reason="reduce" and this decision's session exists on the position.
+    """
+    positions = {p.symbol: p for p in reconstruct_positions(ledger, frame, as_of)}
+    already: set[tuple[str, str]] = set()
+    for fill in ledger.fills():
+        if fill.get("reason") == "reduce":
+            already.add((str(fill["ref_id"]), str(fill.get("session") or "")))
+
+    decisions: list[ExitDecision] = []
+    for rec in ledger.latest():
+        if rec.get("direction") != "reduce":
+            continue
+        session = str(rec.get("as_of") or "")
+        pos = positions.get(rec["symbol"])
+        if pos is None or pos.is_pending or not pos.entry_confirmed:
+            continue  # nothing confirmed to reduce — never sell what was not filled
+        if (pos.ref_id, session) in already:
+            continue
+        available = round(pos.remaining_qty - pos.in_flight_sell_qty, 6)
+        if available <= 1e-9:
+            continue
+        fraction = float(rec.get("target_fraction") or 0.0)
+        qty = round(available * fraction, 6)
+        if qty <= 1e-9:
+            continue
+        decisions.append(
+            ExitDecision(
+                ref_id=pos.ref_id,
+                symbol=pos.symbol,
+                asset_class=pos.asset_class,
+                qty=qty,
+                reason="reduce",
+                detail=f"reduce {fraction:.0%} of the remaining position — {rec['thesis']}",
+            )
+        )
+    return decisions
