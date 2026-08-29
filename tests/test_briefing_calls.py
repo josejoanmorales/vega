@@ -345,3 +345,53 @@ def test_rank_key_orders_by_confidence_then_dev_sharpe_then_symbol() -> None:
     shuffled = items[:]
     random.shuffle(shuffled)
     assert [p.symbol for p, _ in sorted(shuffled, key=_rank_key)] == ["BBB", "AAA", "CCC", "ZZZ"]
+
+
+# ---- signal-level rejections reach the briefing table (WI-228) ------------
+
+
+def test_a_signal_that_filters_its_own_candidates_reports_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A candidate dropped BEFORE sizing must be as visible as one dropped after.
+
+    WI-228's residual gate rejects beta moves inside scan(), so without this
+    plumbing the briefing would show a silently shorter list with no reason —
+    the exact "considered and rejected" gap the table exists to close.
+    """
+
+    class _GatedSignal:
+        family = "oversold_reversion_v1"
+        version = "1.1"
+        promotable = True
+
+        def __init__(self, **_params: object) -> None:
+            self.last_rejections = [
+                (
+                    "AAA",
+                    "beta_move",
+                    "raw -2.6x ATR, SPY explains -2.4x (beta 1.05), residual -0.2x",
+                )
+            ]
+
+        def scan(self, view: object, universe: list[str]) -> list[EntryProposal]:
+            return []
+
+    monkeypatch.setitem(
+        __import__("vega.briefing.calls", fromlist=["FAMILY_SIGNALS"]).FAMILY_SIGNALS,
+        "oversold_reversion_v1",
+        _GatedSignal,
+    )
+    lifecycle, registry = _seed_paper_live(tmp_path)
+    result = _build(tmp_path, lifecycle, registry)
+
+    assert result.calls == ()
+    assert result.rejections == (
+        RenderedRejection(
+            "AAA",
+            "oversold_reversion_v1",
+            "beta_move",
+            "raw -2.6x ATR, SPY explains -2.4x (beta 1.05), residual -0.2x",
+        ),
+    )
+    assert result.no_trade_reason is not None and "beta_move" in result.no_trade_reason
